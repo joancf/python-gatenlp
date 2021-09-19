@@ -10,6 +10,7 @@ class Getter:
     """
     Common base class of all Getter helper classes.
     """
+
     pass
 
 
@@ -40,7 +41,9 @@ def _get_match(succ, name, resultidx=0, matchidx=0, silent_fail=False):
         return None
     if matchidx >= len(matches):
         if not silent_fail:
-            raise Exception(f"No match info with index {matchidx}, length is {len(matches)}")
+            raise Exception(
+                f"No match info with index {matchidx}, length is {len(matches)}"
+            )
         return None
     return matches[matchidx]
 
@@ -73,7 +76,9 @@ def _get_span(succ, name, resultidx=0, matchidx=0, silent_fail=False):
             return None
         if matchidx >= len(matches):
             if not silent_fail:
-                raise Exception(f"No match info with index {matchidx}, length is {len(matches)}")
+                raise Exception(
+                    f"No match info with index {matchidx}, length is {len(matches)}"
+                )
             return None
         ret = matches[matchidx].get("span")
     else:
@@ -91,9 +96,10 @@ class Actions:
     A container to run several actions for a rule.
     """
 
-    def __init__(self,
-                 *actions,
-                 ):
+    def __init__(
+        self,
+        *actions,
+    ):
         """
         Wrap several actions for use in a rule.
 
@@ -134,17 +140,17 @@ class AddAnn:
     """
 
     def __init__(
-            self,
-            name=None,
-            ann=None,  # create a copy of this ann retrieved with GetAnn
-            type=None,  # or create a new annotation with this type
-            annset=None,  # if not none, create in this set instead of the one used for matching
-            features=None,
-            span=None,  # use literal span, GetSpan, if none, span from match
-            resultidx=0,
-            matchidx=0,
-            silent_fail=False,
-        ):  # pylint: disable=W0622
+        self,
+        name=None,
+        ann=None,  # create a copy of this ann retrieved with GetAnn
+        type=None,  # or create a new annotation with this type
+        annset=None,  # if not none, create in this set instead of the one used for matching
+        features=None,
+        span=None,  # use literal span, GetSpan, if none, span from match
+        resultidx=0,
+        matchidx=0,
+        silent_fail=False,
+    ):  # pylint: disable=W0622
         """
         Create an action for adding a new annotation to the outset.
 
@@ -231,7 +237,9 @@ class AddAnn:
                 span = _get_span(succ, self.name, resultidx, matchidx, self.silent_fail)
                 self._add4span(span, succ, context, location)
         else:
-            span = _get_span(succ, self.name, resultidx, self.matchidx, self.silent_fail)
+            span = _get_span(
+                succ, self.name, resultidx, self.matchidx, self.silent_fail
+            )
             self._add4span(span, succ, context, location)
 
     def __call__(self, succ, context=None, location=None):
@@ -248,17 +256,17 @@ class UpdateAnnFeatures:
     """
 
     def __init__(
-            self,
-            name=None,
-            updateann=None,
-            fromann=None,
-            features=None,
-            replace=False,  # replace existing features rather than updating
-            resultidx=0,
-            matchidx=0,
-            silent_fail=False,
-            deepcopy=False
-        ):
+        self,
+        name=None,
+        updateann=None,
+        fromann=None,
+        features=None,
+        replace=False,  # replace existing features rather than updating
+        resultidx=0,
+        matchidx=0,
+        silent_fail=False,
+        deepcopy=False,
+    ):
         """
         Create an UpdateAnnFeatures action. The features to use for updating can either come from
         an existing annotation, an annotation fetched with a GetAnn annotation getter, or from a
@@ -285,12 +293,16 @@ class UpdateAnnFeatures:
         if fromann is None and features is None:
             raise Exception("Either fromann or features must be specified")
         if fromann is not None and features is not None:
-            raise Exception("Parameters fromann and features must not be both specified at the same time")
+            raise Exception(
+                "Parameters fromann and features must not be both specified at the same time"
+            )
         # check parameters for setting features:
         if name is None and updateann is None:
             raise Exception("Either name or updateann must be specified")
         if name is not None and updateann is not None:
-            raise Exception("Parameters name and updateann must not be both specified at the same time")
+            raise Exception(
+                "Parameters name and updateann must not be both specified at the same time"
+            )
         self.name = name
         self.updateann = updateann
         self.fromann = fromann
@@ -341,7 +353,7 @@ class UpdateAnnFeatures:
                     else:
                         raise Exception("No matching source annotation found")
                 fromfeats = ann.features
-        else:   # get it from self.features
+        else:  # get it from self.features
             if callable(self.features):
                 fromfeats = self.features(succ, context=context, location=location)
             else:
@@ -357,9 +369,8 @@ class RemoveAnn:
     """
     Action for removing an anntoation.
     """
-    def __init__(self, name,
-                 resultidx=0, matchidx=0,
-                 silent_fail=True):
+
+    def __init__(self, name, annset,resultidx=0, matchidx=0, silent_fail=True):
         """
         Create a remove annoation action.
 
@@ -373,6 +384,7 @@ class RemoveAnn:
         self.resultidx = resultidx
         self.matchidx = matchidx
         self.silent_fail = silent_fail
+        self.annset=annset
 
     def __call__(self, succ, context=None, location=None):
         match = _get_match(
@@ -391,4 +403,6 @@ class RemoveAnn:
                 raise Exception(
                     f"Could not find an annotation for the name {self.name}"
                 )
-        context.annset.remove(theann)
+        #print(context.annset)
+        self.annset.remove(theann)
+        #context.annset.remove(theann)
