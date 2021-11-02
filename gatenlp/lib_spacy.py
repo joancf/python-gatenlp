@@ -92,8 +92,15 @@ class AnnSpacy(Annotator):
         return doc
 
 
-def apply_spacy(nlp, gatenlpdoc, setname="", containing_anns=None,
-                component_cfg=None, retrieve_spans=None):
+def apply_spacy(
+    nlp,
+    gatenlpdoc,
+    setname="",
+    containing_anns=None,
+    component_cfg=None,
+    retrieve_spans=None,
+    include_trf=False,
+):
     """Run the spacy nlp pipeline on the gatenlp document and transfer the annotations.
     This modifies the gatenlp document in place.
 
@@ -105,6 +112,7 @@ def apply_spacy(nlp, gatenlpdoc, setname="", containing_anns=None,
             of the annotations is analyzed. The annotations should not overlap.
         component_cfg: the component config to use for Spacy
         retrieve_spans: if not None, a list of additional span types to retrieve from the SpaCy document
+        include_trf=False , it breaks the document viewer?
 
     Returns:
         The modified document.
@@ -115,22 +123,36 @@ def apply_spacy(nlp, gatenlpdoc, setname="", containing_anns=None,
             annsiter = containing_anns.fast_iter()
         else:
             annsiter = containing_anns
+        # texts = [gatenlpdoc[ann.start : ann.end] for ann in annsiter]
+        # if component_cfg:
+        #    component_config = {component_cfg: ann.features.to_dict()}
         for ann in annsiter:
             if component_cfg:
                 component_config = {component_cfg: ann.features.to_dict()}
-        
-            covered = gatenlpdoc[ann.start:ann.end]
+
+            covered = gatenlpdoc[ann.start : ann.end]
             spacydoc = nlp(covered, component_cfg=component_config)
-            spacy2gatenlp(spacydoc, gatenlpdoc=gatenlpdoc, setname=setname,
-                          start_offset=ann.start, retrieve_spans=retrieve_spans)
+            spacy2gatenlp(
+                spacydoc,
+                gatenlpdoc=gatenlpdoc,
+                setname=setname,
+                start_offset=ann.start,
+                retrieve_spans=retrieve_spans,
+                include_trf=include_trf,
+            )
             elems = dir(spacydoc._)
             for elem in elems:
-                if elem not in ['get', 'set', 'has']:
+                if elem not in ["get", "set", "has", "trf_data"]:
                     ann.features[elem] = spacydoc._.get(elem)
+            if include_trf:
+                ann.features["trf"] = gatenlpdoc.features["trf"]
+                del gatenlpdoc.features["trf"]
         return gatenlpdoc
     else:
         spacydoc = nlp(gatenlpdoc.text)
-        return spacy2gatenlp(spacydoc, gatenlpdoc=gatenlpdoc, setname=setname)
+        return spacy2gatenlp(
+            spacydoc, gatenlpdoc=gatenlpdoc, setname=setname, include_trf=include_trf
+        )
 
 
 def spacy2gatenlp(
@@ -149,7 +171,8 @@ def spacy2gatenlp(
     add_dep=True,
     ent_prefix=None,
     start_offset=0,
-    retrieve_spans=None
+    retrieve_spans=None,
+    include_trf=False,
 ):
     """Convert a spacy document to a gatenlp document. If a gatenlp document is already
     provided, add the annotations from the spacy document to it. In this case the
@@ -181,7 +204,7 @@ def spacy2gatenlp(
     Returns:
       the new or modified Document
     """
-    
+
     # add_spacetokens:  (Default value = True)
     # not sure how to do this yet
 
@@ -238,12 +261,19 @@ def spacy2gatenlp(
             anntype = space_token_type
         else:
             anntype = token_type
-        annid = annset.add(from_off+start_offset, to_off+start_offset, anntype, fm).id
+        annid = annset.add(
+            from_off + start_offset, to_off + start_offset, anntype, fm
+        ).id
         toki2annid[tok.i] = annid
         # print("Added annotation with id: {} for token {}".format(annid, tok.i))
         ws = tok.whitespace_
-        if len(ws) > 0:
-            annset.add(to_off+start_offset, to_off + len(ws)+start_offset, space_token_type, {"is_space": True})
+        if len(ws) < 0:
+            annset.add(
+                to_off + start_offset,
+                to_off + len(ws) + start_offset,
+                space_token_type,
+                {"is_space": True},
+            )
     # if we have a dependency parse, now also add the parse edges
     if SPACY_IS_PARSED(spacydoc) and add_tokens and add_dep:
         for tok in spacydoc:
@@ -257,14 +287,39 @@ def spacy2gatenlp(
                 entname = ent_prefix + ent.label_
             else:
                 entname = ent.label_
-            annset.add(ent.start_char+start_offset, ent.end_char+start_offset, entname, {"lemma": ent.lemma_})
+            annset.add(
+                ent.start_char + start_offset,
+                ent.end_char + start_offset,
+                entname,
+                {"lemma": ent.lemma_},
+            )
     if spacydoc.sents and add_sents:
         for sent in spacydoc.sents:
-            annset.add(sent.start_char+start_offset, sent.end_char+start_offset, sentence_type, {})
+            annset.add(
+                sent.start_char + start_offset,
+                sent.end_char + start_offset,
+                sentence_type,
+                {},
+            )
     if spacydoc.noun_chunks and add_nounchunks:
         for chunk in spacydoc.noun_chunks:
-            annset.add(chunk.start_char+start_offset, chunk.end_char+start_offset, nounchunk_type, {})
+            annset.add(
+                chunk.start_char + start_offset,
+                chunk.end_char + start_offset,
+                nounchunk_type,
+                {},
+            )
     for spanType in retrieve_spans:
         for span in spacydoc.spans[spanType]:
-            annset.add(span.start_char+start_offset, span.end_char+start_offset, spanType, {})
+            annset.add(
+                span.start_char + start_offset,
+                span.end_char + start_offset,
+                spanType,
+                {},
+            )
+    if include_trf:
+        try:
+            retdoc.features["trf"] = spacydoc._.trf_data
+        except:
+            retdoc.features["trf"] = None
     return retdoc

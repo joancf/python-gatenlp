@@ -42,7 +42,9 @@ def _get_match(succ, name, resultidx=0, matchidx=0, silent_fail=False):
         return None
     if matchidx >= len(matches):
         if not silent_fail:
-            raise Exception(f"No match info with index {matchidx}, length is {len(matches)}")
+            raise Exception(
+                f"No match info with index {matchidx}, length is {len(matches)}"
+            )
         return None
     return matches[matchidx]
 
@@ -75,7 +77,9 @@ def _get_span(succ, name, resultidx=0, matchidx=0, silent_fail=False):
             return None
         if matchidx >= len(matches):
             if not silent_fail:
-                raise Exception(f"No match info with index {matchidx}, length is {len(matches)}")
+                raise Exception(
+                    f"No match info with index {matchidx}, length is {len(matches)}"
+                )
             return None
         ret = matches[matchidx].get("span")
     else:
@@ -93,9 +97,10 @@ class Actions:
     A container to run several actions for a rule.
     """
 
-    def __init__(self,
-                 *actions,
-                 ):
+    def __init__(
+        self,
+        *actions,
+    ):
         """
         Wrap several actions for use in a rule.
 
@@ -304,12 +309,16 @@ class UpdateAnnFeatures:
         if fromann is None and features is None:
             raise Exception("Either fromann or features must be specified")
         if fromann is not None and features is not None:
-            raise Exception("Parameters fromann and features must not be both specified at the same time")
+            raise Exception(
+                "Parameters fromann and features must not be both specified at the same time"
+            )
         # check parameters for setting features:
         if name is None and updateann is None:
             raise Exception("Either name or updateann must be specified")
         if name is not None and updateann is not None:
-            raise Exception("Parameters name and updateann must not be both specified at the same time")
+            raise Exception(
+                "Parameters name and updateann must not be both specified at the same time"
+            )
         self.name = name
         self.updateann = updateann
         self.fromann = fromann
@@ -360,7 +369,7 @@ class UpdateAnnFeatures:
                     else:
                         raise Exception("No matching source annotation found")
                 fromfeats = ann.features
-        else:   # get it from self.features
+        else:  # get it from self.features
             if callable(self.features):
                 fromfeats = self.features(succ, context=context, location=location)
             else:
@@ -400,6 +409,7 @@ class RemoveAnn:
         self.resultidx = resultidx
         self.matchidx = matchidx
         self.silent_fail = silent_fail
+        self.annset=annset
 
     def __call__(self, succ, context=None, location=None):
         match = _get_match(
