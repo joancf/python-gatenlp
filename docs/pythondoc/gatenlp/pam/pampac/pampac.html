@@ -30,6 +30,8 @@
 <pre><code class="python">&#34;&#34;&#34;
 Module for the Pampac class.
 &#34;&#34;&#34;
+import sys
+
 from gatenlp.pam.pampac.data import Location, Context
 from gatenlp.pam.pampac.rule import Rule
 from gatenlp.annotation_set import AnnotationSet
@@ -180,8 +182,17 @@ class Pampac:
                 # now that we have fired rules, find out how to advance to the next position
                 if self.skip == &#34;once&#34;:
                     return frets
-                elif self.skip == &#34;once&#34;:
-                    location = ctx.inc_location(location, by_offset=1)
+                elif self.skip == &#34;one&#34;:
+                    # we need to advance to the offset AFTER the BEGINNING of the earliest match
+                    old_t = location.text_location
+                    old_a = location.ann_location
+                    next_o = sys.maxsize
+                    for ret in fired_rets:
+                        for res in ret:
+                            if res.span is not None and res.span.start &lt; next_o:
+                                next_o = res.span.start
+                    location = ctx.inc_location(location, to_offset=next_o+1)
+                    # print(f&#34;********** LOCATION: fired={len(fired_rets)}: from {old_t}/{old_a} for {next_o} to {location.text_location}/{location.ann_location}&#34;)
                 elif self.skip == &#34;longest&#34;:
                     longest = 0
                     for ret in fired_rets:
@@ -224,7 +235,7 @@ class PampacAnnotator(Annotator):
         &#34;&#34;&#34;
 
         Args:
-            pampac: a Pampac instances
+            pampac: a Pampac instance
             ann_desc: annotation specification for annotations to use as input. This can be a annotation set name,
                 or a list of either annotation set names or tuples, where the first element is an annotation set
                 name and the second element is either a type name or a list of type names. E.g. `[(&#34;&#34;, &#34;Token&#34;)]`
@@ -432,8 +443,17 @@ of those.</dd>
                 # now that we have fired rules, find out how to advance to the next position
                 if self.skip == &#34;once&#34;:
                     return frets
-                elif self.skip == &#34;once&#34;:
-                    location = ctx.inc_location(location, by_offset=1)
+                elif self.skip == &#34;one&#34;:
+                    # we need to advance to the offset AFTER the BEGINNING of the earliest match
+                    old_t = location.text_location
+                    old_a = location.ann_location
+                    next_o = sys.maxsize
+                    for ret in fired_rets:
+                        for res in ret:
+                            if res.span is not None and res.span.start &lt; next_o:
+                                next_o = res.span.start
+                    location = ctx.inc_location(location, to_offset=next_o+1)
+                    # print(f&#34;********** LOCATION: fired={len(fired_rets)}: from {old_t}/{old_a} for {next_o} to {location.text_location}/{location.ann_location}&#34;)
                 elif self.skip == &#34;longest&#34;:
                     longest = 0
                     for ret in fired_rets:
@@ -515,7 +535,7 @@ in that span are processed (default: None, use the whole document)</dd>
 <h2 id="args">Args</h2>
 <dl>
 <dt><strong><code>pampac</code></strong></dt>
-<dd>a Pampac instances</dd>
+<dd>a Pampac instance</dd>
 <dt><strong><code>ann_desc</code></strong></dt>
 <dd>annotation specification for annotations to use as input. This can be a annotation set name,
 or a list of either annotation set names or tuples, where the first element is an annotation set
@@ -547,7 +567,7 @@ and returned. Default: do not use containing annotations and run for the whole d
         &#34;&#34;&#34;
 
         Args:
-            pampac: a Pampac instances
+            pampac: a Pampac instance
             ann_desc: annotation specification for annotations to use as input. This can be a annotation set name,
                 or a list of either annotation set names or tuples, where the first element is an annotation set
                 name and the second element is either a type name or a list of type names. E.g. `[(&#34;&#34;, &#34;Token&#34;)]`

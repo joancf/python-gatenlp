@@ -30,12 +30,21 @@
 <pre><code class="python">&#34;&#34;&#34;
 Base class for all gazetteer annotators
 &#34;&#34;&#34;
+from typing import Union, List
+from gatenlp import Document
 from gatenlp.processing.annotator import Annotator
 
 
 class GazetteerAnnotator(Annotator):
-    def __call__(self, *args, **kwargs):
-        raise RuntimeError(&#34;Not implemented in Gazetteer base class&#34;)</code></pre>
+    def __call__(self, doc: Document, **kwargs) -&gt; Union[Document, List[Document], None]:
+        raise RuntimeError(&#34;Not implemented in Gazetteer base class&#34;)
+
+class StringGazetteerAnnotator(GazetteerAnnotator):
+    &#34;&#34;&#34;
+    A gazetteer annotator the can be applied to strings.
+    &#34;&#34;&#34;
+    def find_all(self, text, *args, **kwargs):
+        pass</code></pre>
 </details>
 </section>
 <section>
@@ -58,7 +67,7 @@ inheritance.</p></div>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class GazetteerAnnotator(Annotator):
-    def __call__(self, *args, **kwargs):
+    def __call__(self, doc: Document, **kwargs) -&gt; Union[Document, List[Document], None]:
         raise RuntimeError(&#34;Not implemented in Gazetteer base class&#34;)</code></pre>
 </details>
 <h3>Ancestors</h3>
@@ -68,6 +77,7 @@ inheritance.</p></div>
 </ul>
 <h3>Subclasses</h3>
 <ul class="hlist">
+<li><a title="gatenlp.processing.gazetteer.base.StringGazetteerAnnotator" href="#gatenlp.processing.gazetteer.base.StringGazetteerAnnotator">StringGazetteerAnnotator</a></li>
 <li><a title="gatenlp.processing.gazetteer.stringgazetteer.StringGazetteer" href="stringgazetteer.html#gatenlp.processing.gazetteer.stringgazetteer.StringGazetteer">StringGazetteer</a></li>
 <li><a title="gatenlp.processing.gazetteer.tokengazetteer.TokenGazetteer" href="tokengazetteer.html#gatenlp.processing.gazetteer.tokengazetteer.TokenGazetteer">TokenGazetteer</a></li>
 <li><a title="gatenlp.processing.gazetteer.tokengazetteer.TokenGazetteerNode" href="tokengazetteer.html#gatenlp.processing.gazetteer.tokengazetteer.TokenGazetteerNode">TokenGazetteerNode</a></li>
@@ -81,6 +91,54 @@ inheritance.</p></div>
 <li><code><a title="gatenlp.processing.annotator.Annotator.pipe" href="../annotator.html#gatenlp.processing.annotator.Annotator.pipe">pipe</a></code></li>
 <li><code><a title="gatenlp.processing.annotator.Annotator.reduce" href="../annotator.html#gatenlp.processing.annotator.Annotator.reduce">reduce</a></code></li>
 <li><code><a title="gatenlp.processing.annotator.Annotator.start" href="../annotator.html#gatenlp.processing.annotator.Annotator.start">start</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="gatenlp.processing.gazetteer.base.StringGazetteerAnnotator"><code class="flex name class">
+<span>class <span class="ident">StringGazetteerAnnotator</span></span>
+</code></dt>
+<dd>
+<div class="desc"><p>A gazetteer annotator the can be applied to strings.</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class StringGazetteerAnnotator(GazetteerAnnotator):
+    &#34;&#34;&#34;
+    A gazetteer annotator the can be applied to strings.
+    &#34;&#34;&#34;
+    def find_all(self, text, *args, **kwargs):
+        pass</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator" href="#gatenlp.processing.gazetteer.base.GazetteerAnnotator">GazetteerAnnotator</a></li>
+<li><a title="gatenlp.processing.annotator.Annotator" href="../annotator.html#gatenlp.processing.annotator.Annotator">Annotator</a></li>
+<li>abc.ABC</li>
+</ul>
+<h3>Subclasses</h3>
+<ul class="hlist">
+<li><a title="gatenlp.processing.gazetteer.stringregex.StringRegexAnnotator" href="stringregex.html#gatenlp.processing.gazetteer.stringregex.StringRegexAnnotator">StringRegexAnnotator</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="gatenlp.processing.gazetteer.base.StringGazetteerAnnotator.find_all"><code class="name flex">
+<span>def <span class="ident">find_all</span></span>(<span>self, text, *args, **kwargs)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator" href="#gatenlp.processing.gazetteer.base.GazetteerAnnotator">GazetteerAnnotator</a></b></code>:
+<ul class="hlist">
+<li><code><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator.__call__" href="../annotator.html#gatenlp.processing.annotator.Annotator.__call__">__call__</a></code></li>
+<li><code><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator.finish" href="../annotator.html#gatenlp.processing.annotator.Annotator.finish">finish</a></code></li>
+<li><code><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator.pipe" href="../annotator.html#gatenlp.processing.annotator.Annotator.pipe">pipe</a></code></li>
+<li><code><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator.reduce" href="../annotator.html#gatenlp.processing.annotator.Annotator.reduce">reduce</a></code></li>
+<li><code><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator.start" href="../annotator.html#gatenlp.processing.annotator.Annotator.start">start</a></code></li>
 </ul>
 </li>
 </ul>
@@ -103,6 +161,12 @@ inheritance.</p></div>
 <ul>
 <li>
 <h4><code><a title="gatenlp.processing.gazetteer.base.GazetteerAnnotator" href="#gatenlp.processing.gazetteer.base.GazetteerAnnotator">GazetteerAnnotator</a></code></h4>
+</li>
+<li>
+<h4><code><a title="gatenlp.processing.gazetteer.base.StringGazetteerAnnotator" href="#gatenlp.processing.gazetteer.base.StringGazetteerAnnotator">StringGazetteerAnnotator</a></code></h4>
+<ul class="">
+<li><code><a title="gatenlp.processing.gazetteer.base.StringGazetteerAnnotator.find_all" href="#gatenlp.processing.gazetteer.base.StringGazetteerAnnotator.find_all">find_all</a></code></li>
+</ul>
 </li>
 </ul>
 </li>

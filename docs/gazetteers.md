@@ -1,26 +1,40 @@
 # Gazetteers
 
+Gazetteers make it easy to find matches in a document from a large list of gazetteer entries. Entries can be associated with arbitrary features, and when a match is found, an annotation is created with the features related to the gazetteer entry. `gatenlp` currently supports the following gazetteer annotators:
 
+* `StringGazetteer`: match the document text against a gazetteer list of string entries
+* `TokenGazetteer`: match an annotation (token) sequence in the document against a gazetteer list of entries, where each entry is a sequence of token strings
 
 
 
 ```python
 import os
 from gatenlp import Document
-from gatenlp.processing.gazetteer import TokenGazetteer
-from gatenlp.processing.tokenizer import NLTKTokenizer
-
-# all the example files will be created in "./tmp"
-if not os.path.exists("tmp"):
-    os.mkdir("tmp")
+from gatenlp.processing.gazetteer import TokenGazetteer, StringGazetteer
 ```
+
+## StringGazetteer
+
+The main features of the `StringGazetteer`
+
+* match arbitrary strings in the document text
+* matches a single space in an gazetteer entry against any number of whitespace characters in the document text
+* can use a list of characters, a function, or annotations to define what should be treated as whitespace
+* optionally will not match across "split" characters
+* can use a list of characters, a function, or annotations to define what should be treated as split characters
+* optionally only matches from word starting and/or to word ending positions
+* uses annotations to define where word start/end locations are in the document
+* can load GATE gazetteer files
+* can load the gazetteer from Python a python list
+
+#### Create a gazetteer from a Python list
+
+Each gazetteer entry is a tuple, where the first element is the string to match and the second element is a dictionary with arbitrary features. When an entry contains leading or trailing whitespace, by default it is removed and multiple whitespace characters within the entry are replaced by a single space internally (this can be disabled with the `ws_clean=False` parameter if the gazetteer entries are already properly cleaned)
+
 
 
 ```python
-
-# 1) Create a gazetteer from a Python list 
-
-gazlist = [
+gazlist1 = [
     ("Barack Obama", dict(url="https://en.wikipedia.org/wiki/Barack_Obama")),
     ("Obama", dict(url="https://en.wikipedia.org/wiki/Barack_Obama")),
     ("Donald Trump", dict(url="https://en.wikipedia.org/wiki/Donald_Trump")),
@@ -28,15 +42,20 @@ gazlist = [
     ("George W. Bush", dict(url="https://en.wikipedia.org/wiki/George_W._Bush")),
     ("George Bush", dict(url="https://en.wikipedia.org/wiki/George_W._Bush")),
     ("Bush", dict(url="https://en.wikipedia.org/wiki/George_W._Bush")),
-    ("Bill Clinton", dict(url="https://en.wikipedia.org/wiki/Bill_Clinton")),
+    ("    Bill        Clinton   ", dict(url="https://en.wikipedia.org/wiki/Bill_Clinton")),
     ("Clinton", dict(url="https://en.wikipedia.org/wiki/Bill_Clinton")),
 ]
 
-# Document with some text mentioning some of the names
+# Document with some text mentioning some of the names in the gazeteer for testing
 text = """Barack Obama was the 44th president of the US and he followed George W. Bush and
-  was followed by Donald Trump. Before Bush, Bill Clinton was president."""
-doc = Document(text)
-doc
+  was followed by Donald Trump. Before Bush, Bill Clinton was president.
+  Also, lets include a sentence about South Korea which is called 대한민국 in Korean.
+  And a sentence with the full name of Iran in Farsi: جمهوری اسلامی ایران and also with 
+  just the word "Iran" in Farsi: ایران 
+  Also barack obama in all lower case and SOUTH KOREA in all upper case
+  """
+doc0 = Document(text)
+doc0
 ```
 
 
@@ -45,13 +64,13 @@ doc
 // class to convert the standard JSON representation of a gatenlp
 // document into something we need here and methods to access the data.
 var gatenlpDocRep = class {
-    constructor(jsonstring) {
-            this.sep = "║"
-            this.sname2types = new Map();
-            this.snameid2ann = new Map();
-            this.snametype2ids = new Map();
-            let bdoc = JSON.parse(jsonstring);
-            this.text = bdoc["text"];
+    constructor(bdoc) {
+        this.sep = "║"
+        this.sname2types = new Map();
+        this.snameid2ann = new Map();
+        this.snametype2ids = new Map();
+	    this.text = bdoc["text"];
+	    const regex = / +$/;
             this.features = bdoc["features"];
             if (this.text == null) {
                 this.text = "[No proper GATENLP document to show]";
@@ -360,7 +379,7 @@ var gatenlpDocView = class {
                 // trick for zero length annotations: show them as length one annotations for now
                 var endoff = ann.end
                 if (ann.start == ann.end) endoff = endoff+1
-                for (let i = ann.start; i <= endoff; i++) { // iterate until one beyond the end of the ann
+                for (let i = ann.start; i < endoff; i++) { // iterate until one beyond the end of the ann
                     let have = this.anns4offset[i]
                     if (have == undefined) {                    
                       have = { "offset": i, "anns": new Set()}
@@ -378,12 +397,12 @@ var gatenlpDocView = class {
                 }
             }
         }
-        console.log("initial anns4Offset:")
-        console.log(this.anns4offset)
+        //console.log("initial anns4Offset:")
+        //console.log(this.anns4offset)
         // now all offsets have a list of set/type and set/annid tuples
         // compress the list to only contain anything but undefined where it changes 
         let last = this.anns4offset[0]
-        for (let i = 1; i < this.anns4offset.length; i++) {
+        for (let i = 1; i < this.anns4offset.length+1; i++) {
             let cur = this.anns4offset[i]
             if (last == undefined && cur == undefined) {
                 // console.log("Offset "+i+" both undefined")
@@ -409,7 +428,8 @@ var gatenlpDocView = class {
             } 
             last = cur
         }
-        // for debugging: deep copy the anns4offset data structure so we can later show in the debugger
+	let beyond = this.docrep.text.length
+	this.anns4offset[beyond] = { "anns": new Set(), "offset": beyond}
 
         // console.log("compressed anns4Offset:")
         // console.log(this.anns4offset)
@@ -425,21 +445,22 @@ var gatenlpDocView = class {
         // * get the annotation setname/types 
         // * from the list of setname/types, determine a colour and store it
         // * generate the span from last to here 
-        // after the end, generate the last span
+        // * process one additional char at the end to include last span
         let spans = []
         let last = this.anns4offset[0];
         if (last == undefined) {
             last = { "anns": new Set(), "offset": 0 };
         }
-        for (let i = 1; i < this.anns4offset.length; i++) {
+        for (let i = 1; i < this.anns4offset.length+1; i++) {
             let info = this.anns4offset[i];
             if (info != undefined) {
                 let txt = this.docrep.text.substring(last["offset"], info["offset"]);
-                console.log("Got text: "+txt) 
+                txt = txt.replace(/\n/g, "\u2002\n");
+                // console.log("Got text: "+txt) 
                 let span = undefined;
                 if (last["anns"].size != 0) {
                     let col = this.color4types(last.anns);
-                    let sty = this.style4color(col);
+                    let sty = this.style4color(col)+"white-space:pre-wrap;" 
                     span = $('<span>').attr("style", sty);
                     let object = this;
                     let anns = last.anns;
@@ -455,26 +476,6 @@ var gatenlpDocView = class {
                 last = info;
             }
         }
-        let txt = this.docrep.text.substring(last["offset"], this.docrep.text.length);
-        let span = undefined;
-        // TODO: if we are already at the end, nothing needs to be done (prevent empty span from being added)
-        if (last["anns"].length != 0) {
-            let col = this.color4types(last.anns);
-            let sty = this.style4color(col);
-            // span = $('<span>').attr("style", sty).attr("data-anns", last.anns.join(","));
-            span = $('<span>').attr("style", sty)
-            let object = this;
-            let anns = last.anns;
-            let annhandler = function(ev) { docview_annsel(object, ev, anns) }
-            span.on("click", annhandler);
-            // console.log("Adding styled text for "+col+" : "+txt)
-        } else {
-            // console.log("Adding non-styled text "+txt)
-            span = $('<span>');
-        }
-        span.append($.parseHTML(this.htmlEntities(txt)));
-        spans.push(span);
-        // TODO: end
         // Replace the content
         let divcontent = $(this.id_text);
         $(divcontent).empty();
@@ -485,37 +486,31 @@ var gatenlpDocView = class {
         return str.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("\n", '<br>');
     }
 };
-// console.log("Classes defined, defining gatenlp_run");
-function gatenlp_run(prefix) {
-    bdocjson = document.getElementById(prefix+"data").innerHTML;
-    new gatenlpDocView(new gatenlpDocRep(bdocjson), prefix).init();
-}
-// console.log("Function defined");
 </script>
 
 
 
 
 
-<div><style>#MEITWTNYEO-wrapper { color: black !important; }</style>
-<div id="MEITWTNYEO-wrapper">
+<div><style>#TWSPQQTLMJ-wrapper { color: black !important; }</style>
+<div id="TWSPQQTLMJ-wrapper">
 
 <div>
 <style>
-#MEITWTNYEO-content {
+#TWSPQQTLMJ-content {
     width: 100%;
     height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
 
-.MEITWTNYEO-row {
+.TWSPQQTLMJ-row {
     width: 100%;
     display: flex;
     flex-direction: row;
     flex-wrap: nowrap;
 }
 
-.MEITWTNYEO-col {
+.TWSPQQTLMJ-col {
     border: 1px solid grey;
     display: inline-block;
     min-width: 200px;
@@ -525,23 +520,23 @@ function gatenlp_run(prefix) {
     overflow-y: auto;
 }
 
-.MEITWTNYEO-hdr {
+.TWSPQQTLMJ-hdr {
     font-size: 1.2rem;
     font-weight: bold;
 }
 
-.MEITWTNYEO-label {
+.TWSPQQTLMJ-label {
     margin-bottom: -15px;
     display: block;
 }
 
-.MEITWTNYEO-input {
+.TWSPQQTLMJ-input {
     vertical-align: middle;
     position: relative;
     *overflow: hidden;
 }
 
-#MEITWTNYEO-popup {
+#TWSPQQTLMJ-popup {
     display: none;
     color: black;
     position: absolute;
@@ -556,45 +551,43 @@ function gatenlp_run(prefix) {
     overflow: auto;
 }
 
-.MEITWTNYEO-selection {
+.TWSPQQTLMJ-selection {
     margin-bottom: 5px;
 }
 
-.MEITWTNYEO-featuretable {
+.TWSPQQTLMJ-featuretable {
     margin-top: 10px;
 }
 
-.MEITWTNYEO-fname {
+.TWSPQQTLMJ-fname {
     text-align: left !important;
     font-weight: bold;
     margin-right: 10px;
 }
-.MEITWTNYEO-fvalue {
+.TWSPQQTLMJ-fvalue {
     text-align: left !important;
 }
 </style>
-  <div id="MEITWTNYEO-content">
-        <div id="MEITWTNYEO-popup" style="display: none;">
+  <div id="TWSPQQTLMJ-content">
+        <div id="TWSPQQTLMJ-popup" style="display: none;">
         </div>
-        <div class="MEITWTNYEO-row" id="MEITWTNYEO-row1" style="max-height: 20em; min-height:5em;">
-            <div id="MEITWTNYEO-text-wrapper" class="MEITWTNYEO-col" style="width:70%;">
-                <div class="MEITWTNYEO-hdr" id="MEITWTNYEO-dochdr"></div>
-                <div id="MEITWTNYEO-text">
+        <div class="TWSPQQTLMJ-row" id="TWSPQQTLMJ-row1" style="max-height: 20em; min-height:5em;">
+            <div id="TWSPQQTLMJ-text-wrapper" class="TWSPQQTLMJ-col" style="width:70%;">
+                <div class="TWSPQQTLMJ-hdr" id="TWSPQQTLMJ-dochdr"></div>
+                <div id="TWSPQQTLMJ-text" style="">
                 </div>
             </div>
-            <div id="MEITWTNYEO-chooser" class="MEITWTNYEO-col" style="width:30%; border-left-width: 0px;"></div>
+            <div id="TWSPQQTLMJ-chooser" class="TWSPQQTLMJ-col" style="width:30%; border-left-width: 0px;"></div>
         </div>
-        <div class="MEITWTNYEO-row" id="MEITWTNYEO-row2" style="max-height: 14em; min-height: 3em;">
-            <div id="MEITWTNYEO-details" class="MEITWTNYEO-col" style="width:100%; border-top-width: 0px;">
+        <div class="TWSPQQTLMJ-row" id="TWSPQQTLMJ-row2" style="max-height: 14em; min-height: 3em;">
+            <div id="TWSPQQTLMJ-details" class="TWSPQQTLMJ-col" style="width:100%; border-top-width: 0px;">
             </div>
         </div>
     </div>
 
-    <script type="application/json" id="MEITWTNYEO-data">
-    {"annotation_sets": {}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.", "features": {}, "offset_type": "j", "name": ""}
-    </script>
     <script type="text/javascript">
-        gatenlp_run("MEITWTNYEO-");
+    let TWSPQQTLMJ_data = {"annotation_sets": {}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.\n  Also, lets include a sentence about South Korea which is called \ub300\ud55c\ubbfc\uad6d in Korean.\n  And a sentence with the full name of Iran in Farsi: \u062c\u0645\u0647\u0648\u0631\u06cc \u0627\u0633\u0644\u0627\u0645\u06cc \u0627\u06cc\u0631\u0627\u0646 and also with \n  just the word \"Iran\" in Farsi: \u0627\u06cc\u0631\u0627\u0646 \n  Also barack obama in all lower case and SOUTH KOREA in all upper case\n  ", "features": {}, "offset_type": "j", "name": ""} ; 
+    new gatenlpDocView(new gatenlpDocRep(TWSPQQTLMJ_data), "TWSPQQTLMJ-").init();
     </script>
   </div>
 
@@ -602,38 +595,129 @@ function gatenlp_run(prefix) {
 
 
 
+### Create the StringGazetteer annotator 
+
+In the following example we create the StringGazetteer and specify the source and the format of the source to also load some gazetteer entries into it. This is not required, gazetteer entries can also be added later (see below)
+
 
 ```python
-# Tokenize the document, lets use an NLTK tokenizer
-from nltk.tokenize.destructive import NLTKWordTokenizer
+gaz1 = StringGazetteer(source=gazlist1, source_fmt="gazlist")
+```
 
-tokenizer = NLTKTokenizer(nltk_tokenizer=NLTKWordTokenizer(), out_set="", token_type="Token")
-doc = tokenizer(doc)
-doc
+The StringGazetteer instance is a gatenlp annotator, but can also be used to lookup the information for an entry 
+or check if an entry is in the gazetteer.
+
+
+```python
+print("Entries:     ", len(gaz1))
+print("Entry 'Trump': ", gaz1["Trump"])
+print("Entry 'Bill Clinton': ", gaz1.get("Bill Clinton"))
+print("Contains 'Bush':", "Bush" in gaz1)
+```
+
+    Entries:      9
+    Entry 'Trump':  [{'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}]
+    Entry 'Bill Clinton':  [{'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'}]
+    Contains 'Bush': True
+
+
+Gazetteer entries can also be added with the `add` and `append` methods. That way the gazetteer can be 
+created from several different sources.
+
+Every time gazetteer entries are loaded, it is possible to specify features which should get added to all 
+entries of that list. 
+
+Let us create a new list and specify some features common to all entries of this list and add it to the gazetteer:
+
+
+```python
+gazlist2 = [
+    ("United States", dict(url="https://en.wikipedia.org/wiki/United_States")),
+    ("US", dict(url="https://en.wikipedia.org/wiki/United_States")),
+    ("United Kingdom", dict(url="https://en.wikipedia.org/wiki/United_Kingdom")),
+    ("UK", dict(url="https://en.wikipedia.org/wiki/United_Kingdom")),    
+    ("Austria", dict(url="https://en.wikipedia.org/wiki/Austria")),
+    ("South Korea", dict(url="https://en.wikipedia.org/wiki/South_Korea")),
+    ("대한민국", dict(url="https://en.wikipedia.org/wiki/South_Korea")),
+    ("Iran", dict(url="https://en.wikipedia.org/wiki/Iran")),
+    ("جمهوری اسلامی ایران", dict(url="https://en.wikipedia.org/wiki/Iran")),
+    ("ایران", dict(url="https://en.wikipedia.org/wiki/Iran")),
+]
+
+# Note: if this cell gets executed several times, the data stored with each gazetteer entry gets  
+# extended by a new dictionary of features!
+# In general, there can be arbitrary many feature dictionaries for each entry which can be used to 
+# store the different sets of information for different entities which share the same name.
+gaz1.append(source=gazlist2, source_fmt="gazlist", list_features=dict(type="country"))
+
+print("Entries:     ", len(gaz1))
+print("Entry 'ایران': ", gaz1["ایران"])
+print("Entry 'South Korea': ", gaz1["South Korea"])
+```
+
+    Entries:      19
+    Entry 'ایران':  [{'url': 'https://en.wikipedia.org/wiki/Iran', 'type': 'country'}]
+    Entry 'South Korea':  [{'url': 'https://en.wikipedia.org/wiki/South_Korea', 'type': 'country'}]
+
+
+There are also methods to check if there is a match at some specific position in some text, to find the next match in some text, and to find all matches in some text:
+
+
+```python
+# methods match and find return a tuple with a list of StringGazetteerMatch objects describing all matches
+# as the first element and the length of the longest of the matches at the second element, the find method returns
+# the location of the match as the third element in the tuple
+print("Check for a match in the document text at position 0: ", gaz1.match(text, start=0))
+print("Check for a match in the document text at position 1: ", gaz1.match(text, start=1))
+print("Find the next match from position 3", gaz1.find(text, start=3))
+# the find_all method does not return a tuple, but a generator of tuples:
+print("Find all matches from position 340", list(gaz1.find_all(text, start=340)))
+```
+
+    Check for a match in the document text at position 0:  ([StringGazetteerMatch(start=0, end=12, match='Barack Obama', data=[{'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}], listidxs=[0])], 12)
+    Check for a match in the document text at position 1:  ([], 0)
+    Find the next match from position 3 ([StringGazetteerMatch(start=7, end=12, match='Obama', data=[{'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}], listidxs=[0])], 5, 7)
+    Find all matches from position 340 [StringGazetteerMatch(start=342, end=346, match='Iran', data=[{'url': 'https://en.wikipedia.org/wiki/Iran'}], listidxs=[1]), StringGazetteerMatch(start=358, end=363, match='ایران', data=[{'url': 'https://en.wikipedia.org/wiki/Iran'}], listidxs=[1])]
+
+
+To annotate a document with the matches found in the gazetteer, the StringGazetteer instance can be 
+used as an annotator. By default, matches can occur anywhere in the document, non-whitespace characters must
+match exactly and no special split characters are recognized (so matches can occur across newline characters 
+and sentence boundaries)
+
+By default, annotations of type "Lookup" are created in the default set. The features of the annotation are set
+to the information from the gazetteer entry and the list. If a gazetteer entry was added several times, separate
+annotations are created for each information that was added for the gazetteer string.
+
+
+```python
+doc1 = Document(text)
+doc1 = gaz1(doc1)
+doc1
 ```
 
 
 
 
-<div><style>#VKMWVPNCDE-wrapper { color: black !important; }</style>
-<div id="VKMWVPNCDE-wrapper">
+<div><style>#LVPWBJOSVH-wrapper { color: black !important; }</style>
+<div id="LVPWBJOSVH-wrapper">
 
 <div>
 <style>
-#VKMWVPNCDE-content {
+#LVPWBJOSVH-content {
     width: 100%;
     height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
 
-.VKMWVPNCDE-row {
+.LVPWBJOSVH-row {
     width: 100%;
     display: flex;
     flex-direction: row;
     flex-wrap: nowrap;
 }
 
-.VKMWVPNCDE-col {
+.LVPWBJOSVH-col {
     border: 1px solid grey;
     display: inline-block;
     min-width: 200px;
@@ -643,23 +727,23 @@ doc
     overflow-y: auto;
 }
 
-.VKMWVPNCDE-hdr {
+.LVPWBJOSVH-hdr {
     font-size: 1.2rem;
     font-weight: bold;
 }
 
-.VKMWVPNCDE-label {
+.LVPWBJOSVH-label {
     margin-bottom: -15px;
     display: block;
 }
 
-.VKMWVPNCDE-input {
+.LVPWBJOSVH-input {
     vertical-align: middle;
     position: relative;
     *overflow: hidden;
 }
 
-#VKMWVPNCDE-popup {
+#LVPWBJOSVH-popup {
     display: none;
     color: black;
     position: absolute;
@@ -674,45 +758,195 @@ doc
     overflow: auto;
 }
 
-.VKMWVPNCDE-selection {
+.LVPWBJOSVH-selection {
     margin-bottom: 5px;
 }
 
-.VKMWVPNCDE-featuretable {
+.LVPWBJOSVH-featuretable {
     margin-top: 10px;
 }
 
-.VKMWVPNCDE-fname {
+.LVPWBJOSVH-fname {
     text-align: left !important;
     font-weight: bold;
     margin-right: 10px;
 }
-.VKMWVPNCDE-fvalue {
+.LVPWBJOSVH-fvalue {
     text-align: left !important;
 }
 </style>
-  <div id="VKMWVPNCDE-content">
-        <div id="VKMWVPNCDE-popup" style="display: none;">
+  <div id="LVPWBJOSVH-content">
+        <div id="LVPWBJOSVH-popup" style="display: none;">
         </div>
-        <div class="VKMWVPNCDE-row" id="VKMWVPNCDE-row1" style="max-height: 20em; min-height:5em;">
-            <div id="VKMWVPNCDE-text-wrapper" class="VKMWVPNCDE-col" style="width:70%;">
-                <div class="VKMWVPNCDE-hdr" id="VKMWVPNCDE-dochdr"></div>
-                <div id="VKMWVPNCDE-text">
+        <div class="LVPWBJOSVH-row" id="LVPWBJOSVH-row1" style="max-height: 20em; min-height:5em;">
+            <div id="LVPWBJOSVH-text-wrapper" class="LVPWBJOSVH-col" style="width:70%;">
+                <div class="LVPWBJOSVH-hdr" id="LVPWBJOSVH-dochdr"></div>
+                <div id="LVPWBJOSVH-text" style="">
                 </div>
             </div>
-            <div id="VKMWVPNCDE-chooser" class="VKMWVPNCDE-col" style="width:30%; border-left-width: 0px;"></div>
+            <div id="LVPWBJOSVH-chooser" class="LVPWBJOSVH-col" style="width:30%; border-left-width: 0px;"></div>
         </div>
-        <div class="VKMWVPNCDE-row" id="VKMWVPNCDE-row2" style="max-height: 14em; min-height: 3em;">
-            <div id="VKMWVPNCDE-details" class="VKMWVPNCDE-col" style="width:100%; border-top-width: 0px;">
+        <div class="LVPWBJOSVH-row" id="LVPWBJOSVH-row2" style="max-height: 14em; min-height: 3em;">
+            <div id="LVPWBJOSVH-details" class="LVPWBJOSVH-col" style="width:100%; border-top-width: 0px;">
             </div>
         </div>
     </div>
 
-    <script type="application/json" id="VKMWVPNCDE-data">
-    {"annotation_sets": {"": {"name": "detached-from:", "annotations": [{"type": "Token", "start": 0, "end": 6, "id": 0, "features": {}}, {"type": "Token", "start": 7, "end": 12, "id": 1, "features": {}}, {"type": "Token", "start": 13, "end": 16, "id": 2, "features": {}}, {"type": "Token", "start": 17, "end": 20, "id": 3, "features": {}}, {"type": "Token", "start": 21, "end": 25, "id": 4, "features": {}}, {"type": "Token", "start": 26, "end": 35, "id": 5, "features": {}}, {"type": "Token", "start": 36, "end": 38, "id": 6, "features": {}}, {"type": "Token", "start": 39, "end": 42, "id": 7, "features": {}}, {"type": "Token", "start": 43, "end": 45, "id": 8, "features": {}}, {"type": "Token", "start": 46, "end": 49, "id": 9, "features": {}}, {"type": "Token", "start": 50, "end": 52, "id": 10, "features": {}}, {"type": "Token", "start": 53, "end": 61, "id": 11, "features": {}}, {"type": "Token", "start": 62, "end": 68, "id": 12, "features": {}}, {"type": "Token", "start": 69, "end": 71, "id": 13, "features": {}}, {"type": "Token", "start": 72, "end": 76, "id": 14, "features": {}}, {"type": "Token", "start": 77, "end": 80, "id": 15, "features": {}}, {"type": "Token", "start": 83, "end": 86, "id": 16, "features": {}}, {"type": "Token", "start": 87, "end": 95, "id": 17, "features": {}}, {"type": "Token", "start": 96, "end": 98, "id": 18, "features": {}}, {"type": "Token", "start": 99, "end": 105, "id": 19, "features": {}}, {"type": "Token", "start": 106, "end": 112, "id": 20, "features": {}}, {"type": "Token", "start": 113, "end": 119, "id": 21, "features": {}}, {"type": "Token", "start": 120, "end": 124, "id": 22, "features": {}}, {"type": "Token", "start": 124, "end": 125, "id": 23, "features": {}}, {"type": "Token", "start": 126, "end": 130, "id": 24, "features": {}}, {"type": "Token", "start": 131, "end": 138, "id": 25, "features": {}}, {"type": "Token", "start": 139, "end": 142, "id": 26, "features": {}}, {"type": "Token", "start": 143, "end": 152, "id": 27, "features": {}}, {"type": "Token", "start": 152, "end": 153, "id": 28, "features": {}}], "next_annid": 29}}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.", "features": {}, "offset_type": "j", "name": ""}
-    </script>
     <script type="text/javascript">
-        gatenlp_run("VKMWVPNCDE-");
+    let LVPWBJOSVH_data = {"annotation_sets": {"": {"name": "detached-from:", "annotations": [{"type": "Lookup", "start": 0, "end": 12, "id": 0, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Lookup", "start": 7, "end": 12, "id": 1, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Lookup", "start": 43, "end": 45, "id": 2, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/United_States"}}, {"type": "Lookup", "start": 62, "end": 76, "id": 3, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Lookup", "start": 72, "end": 76, "id": 4, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Lookup", "start": 99, "end": 111, "id": 5, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Lookup", "start": 106, "end": 111, "id": 6, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Lookup", "start": 120, "end": 124, "id": 7, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Lookup", "start": 126, "end": 138, "id": 8, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Lookup", "start": 131, "end": 138, "id": 9, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Lookup", "start": 192, "end": 203, "id": 10, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Lookup", "start": 220, "end": 224, "id": 11, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Lookup", "start": 275, "end": 279, "id": 12, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Lookup", "start": 290, "end": 309, "id": 13, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Lookup", "start": 304, "end": 309, "id": 14, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Lookup", "start": 342, "end": 346, "id": 15, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Lookup", "start": 358, "end": 363, "id": 16, "features": {"type": "country", "url": "https://en.wikipedia.org/wiki/Iran"}}], "next_annid": 17}}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.\n  Also, lets include a sentence about South Korea which is called \ub300\ud55c\ubbfc\uad6d in Korean.\n  And a sentence with the full name of Iran in Farsi: \u062c\u0645\u0647\u0648\u0631\u06cc \u0627\u0633\u0644\u0627\u0645\u06cc \u0627\u06cc\u0631\u0627\u0646 and also with \n  just the word \"Iran\" in Farsi: \u0627\u06cc\u0631\u0627\u0646 \n  Also barack obama in all lower case and SOUTH KOREA in all upper case\n  ", "features": {}, "offset_type": "j", "name": ""} ; 
+    new gatenlpDocView(new gatenlpDocRep(LVPWBJOSVH_data), "LVPWBJOSVH-").init();
+    </script>
+  </div>
+
+</div></div>
+
+
+
+### StringGazetteer parameters
+
+The parameters for the StringGazetteer constructor can be used to change the behaviour of the gazetteer in many ways. The parameters related to loading gazetteer entries can also be specified with the `append` method. 
+
+Parameters to influence how annotations for matches are created:
+* `outset_name`: which annotation set to place the annotations in
+* `ann_type`: the annotation type to use, default is "Lookup". Note that if a list is loaded, it is possible to 
+  specify a list-specific annotation type.
+
+Parameters to influence how the matches are carried out through annotations in the document. If a parameter is None,
+the match is not influenced by that kind of annotations, but could be influenced by other parameters (see below):
+* `start_type`: the type of annotations used to identify where matches can start (e.g. Token annotations)
+* `end_type`: the type of annotations used to identify where atches can end
+* `ws_type`: the type of annotations which indicate whitespace in the document. 
+* `split_type`: the type of annotations which indicate a split, i.e. something which should not be part of a match
+* `annset_name`: the name of the annotation set where all the annotations above are expceted
+
+Other parameters to influence how matches are carried out:
+* `ws_chars`: if `ws_type` is not specified, can be used to change which characters should be considered whitespace by specifying a string of those characters or a callable that returns True or False when passed a character
+* `split_chars`: if `split_type` is not specified, can be used to change which characters should be considered split characters by specifying a string of those characters or a callable that returns True or False when passed a character
+* `map_chars`: how to map characters when storing a gazetteer entry or accessing the text to match: either a callable that maps a single character to a single character or one of the strings "lower" or "upper"
+* `ws_clean`: if True (the default) enables trimming and white-space normalization of gazetteer entries when loading, if False, assumes that this has been correctly done already.
+
+Parameters that influence how gazetteer data is loaded:
+* `source`: what to load. This is either the path to a file (a string) or a list with gazetteer entries, depending on the `source_fmt` 
+* `source_fmt`: specifies what format the gazetteer data to load is in
+* `source_encoding`: the encoding if data gets loaded from a file
+* `source_sep`: the separator character if the format is "gate-def". For legacy GATE gazetteer files, ":" should be used. 
+* `list_features`: a dict of features to assign to all entries of a list that gets loaded 
+* `list_type`: if a list gets loaded, this can be used to override the annotation type of annotations that get created for matches, if None, the type specified via `ann_type` or the default "Lookup" is used
+* `list_nr`: can be used to add list features to the list features of an already loaded list and add the gazetteer entries to that list
+
+
+
+```python
+# Create a new StringGazetteer which creates "Person" annotations for the person list, "Country" annotations
+# for the country list, and ignores case when matching
+# Because the gazetteer by default matches anywhere, the lower case "us" now matches inside several words
+gaz2 = StringGazetteer(map_chars="lower")
+gaz2.append(source=gazlist1, source_fmt="gazlist", list_type="Person")
+gaz2.append(source=gazlist2, source_fmt="gazlist", list_type="Country")
+doc2 = Document(text)
+doc2 = gaz2(doc2)
+doc2
+```
+
+
+
+
+<div><style>#NCAARBVOGO-wrapper { color: black !important; }</style>
+<div id="NCAARBVOGO-wrapper">
+
+<div>
+<style>
+#NCAARBVOGO-content {
+    width: 100%;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+.NCAARBVOGO-row {
+    width: 100%;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+}
+
+.NCAARBVOGO-col {
+    border: 1px solid grey;
+    display: inline-block;
+    min-width: 200px;
+    padding: 5px;
+    /* white-space: normal; */
+    /* white-space: pre-wrap; */
+    overflow-y: auto;
+}
+
+.NCAARBVOGO-hdr {
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.NCAARBVOGO-label {
+    margin-bottom: -15px;
+    display: block;
+}
+
+.NCAARBVOGO-input {
+    vertical-align: middle;
+    position: relative;
+    *overflow: hidden;
+}
+
+#NCAARBVOGO-popup {
+    display: none;
+    color: black;
+    position: absolute;
+    margin-top: 10%;
+    margin-left: 10%;
+    background: #aaaaaa;
+    width: 60%;
+    height: 60%;
+    z-index: 50;
+    padding: 25px 25px 25px;
+    border: 1px solid black;
+    overflow: auto;
+}
+
+.NCAARBVOGO-selection {
+    margin-bottom: 5px;
+}
+
+.NCAARBVOGO-featuretable {
+    margin-top: 10px;
+}
+
+.NCAARBVOGO-fname {
+    text-align: left !important;
+    font-weight: bold;
+    margin-right: 10px;
+}
+.NCAARBVOGO-fvalue {
+    text-align: left !important;
+}
+</style>
+  <div id="NCAARBVOGO-content">
+        <div id="NCAARBVOGO-popup" style="display: none;">
+        </div>
+        <div class="NCAARBVOGO-row" id="NCAARBVOGO-row1" style="max-height: 20em; min-height:5em;">
+            <div id="NCAARBVOGO-text-wrapper" class="NCAARBVOGO-col" style="width:70%;">
+                <div class="NCAARBVOGO-hdr" id="NCAARBVOGO-dochdr"></div>
+                <div id="NCAARBVOGO-text" style="">
+                </div>
+            </div>
+            <div id="NCAARBVOGO-chooser" class="NCAARBVOGO-col" style="width:30%; border-left-width: 0px;"></div>
+        </div>
+        <div class="NCAARBVOGO-row" id="NCAARBVOGO-row2" style="max-height: 14em; min-height: 3em;">
+            <div id="NCAARBVOGO-details" class="NCAARBVOGO-col" style="width:100%; border-top-width: 0px;">
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+    let NCAARBVOGO_data = {"annotation_sets": {"": {"name": "detached-from:", "annotations": [{"type": "Person", "start": 0, "end": 12, "id": 0, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Person", "start": 7, "end": 12, "id": 1, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Country", "start": 43, "end": 45, "id": 2, "features": {"url": "https://en.wikipedia.org/wiki/United_States"}}, {"type": "Person", "start": 62, "end": 76, "id": 3, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Person", "start": 72, "end": 76, "id": 4, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Country", "start": 73, "end": 75, "id": 5, "features": {"url": "https://en.wikipedia.org/wiki/United_States"}}, {"type": "Person", "start": 99, "end": 111, "id": 6, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Person", "start": 106, "end": 111, "id": 7, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Person", "start": 120, "end": 124, "id": 8, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Country", "start": 121, "end": 123, "id": 9, "features": {"url": "https://en.wikipedia.org/wiki/United_States"}}, {"type": "Person", "start": 126, "end": 138, "id": 10, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Person", "start": 131, "end": 138, "id": 11, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Country", "start": 192, "end": 203, "id": 12, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Country", "start": 220, "end": 224, "id": 13, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Country", "start": 275, "end": 279, "id": 14, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 290, "end": 309, "id": 15, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 304, "end": 309, "id": 16, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 328, "end": 330, "id": 17, "features": {"url": "https://en.wikipedia.org/wiki/United_States"}}, {"type": "Country", "start": 342, "end": 346, "id": 18, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 358, "end": 363, "id": 19, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Person", "start": 372, "end": 384, "id": 20, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Person", "start": 379, "end": 384, "id": 21, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Country", "start": 407, "end": 418, "id": 22, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}], "next_annid": 23}}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.\n  Also, lets include a sentence about South Korea which is called \ub300\ud55c\ubbfc\uad6d in Korean.\n  And a sentence with the full name of Iran in Farsi: \u062c\u0645\u0647\u0648\u0631\u06cc \u0627\u0633\u0644\u0627\u0645\u06cc \u0627\u06cc\u0631\u0627\u0646 and also with \n  just the word \"Iran\" in Farsi: \u0627\u06cc\u0631\u0627\u0646 \n  Also barack obama in all lower case and SOUTH KOREA in all upper case\n  ", "features": {}, "offset_type": "j", "name": ""} ; 
+    new gatenlpDocView(new gatenlpDocRep(NCAARBVOGO_data), "NCAARBVOGO-").init();
     </script>
   </div>
 
@@ -722,69 +956,247 @@ doc
 
 
 ```python
+# Create a new StringGazetteer which matches case-insensitive and creates annotations as above, 
+# but limits matches to where Token annotations start/end. For this we have to first annotate the 
+# document with a Tokenizer. 
+# Now, matches are restricted so the start/end matches the start/end of a Token annotation, so the 
+# lower-case matches inside words do not occur any more
 
-# Tokenize the strings from our gazetteer list as well
+# create a tokenizer based on the NLTK WordPunctTokenizer. 
+from gatenlp.processing.tokenizer import NLTKTokenizer
+from nltk.tokenize.regexp import WordPunctTokenizer
+tokenizer = NLTKTokenizer(
+    nltk_tokenizer=WordPunctTokenizer(), 
+    token_type="Token", outset_name="")
 
+gaz3 = StringGazetteer(map_chars="lower", start_type="Token", end_type="Token")
+gaz3.append(source=gazlist1, source_fmt="gazlist", list_type="Person")
+gaz3.append(source=gazlist2, source_fmt="gazlist", list_type="Country")
+doc3 = Document(text)
+doc3 = tokenizer(doc3)
+doc3 = gaz3(doc3)
+doc3
+
+```
+
+
+
+
+<div><style>#TBMLZBANUE-wrapper { color: black !important; }</style>
+<div id="TBMLZBANUE-wrapper">
+
+<div>
+<style>
+#TBMLZBANUE-content {
+    width: 100%;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+.TBMLZBANUE-row {
+    width: 100%;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+}
+
+.TBMLZBANUE-col {
+    border: 1px solid grey;
+    display: inline-block;
+    min-width: 200px;
+    padding: 5px;
+    /* white-space: normal; */
+    /* white-space: pre-wrap; */
+    overflow-y: auto;
+}
+
+.TBMLZBANUE-hdr {
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.TBMLZBANUE-label {
+    margin-bottom: -15px;
+    display: block;
+}
+
+.TBMLZBANUE-input {
+    vertical-align: middle;
+    position: relative;
+    *overflow: hidden;
+}
+
+#TBMLZBANUE-popup {
+    display: none;
+    color: black;
+    position: absolute;
+    margin-top: 10%;
+    margin-left: 10%;
+    background: #aaaaaa;
+    width: 60%;
+    height: 60%;
+    z-index: 50;
+    padding: 25px 25px 25px;
+    border: 1px solid black;
+    overflow: auto;
+}
+
+.TBMLZBANUE-selection {
+    margin-bottom: 5px;
+}
+
+.TBMLZBANUE-featuretable {
+    margin-top: 10px;
+}
+
+.TBMLZBANUE-fname {
+    text-align: left !important;
+    font-weight: bold;
+    margin-right: 10px;
+}
+.TBMLZBANUE-fvalue {
+    text-align: left !important;
+}
+</style>
+  <div id="TBMLZBANUE-content">
+        <div id="TBMLZBANUE-popup" style="display: none;">
+        </div>
+        <div class="TBMLZBANUE-row" id="TBMLZBANUE-row1" style="max-height: 20em; min-height:5em;">
+            <div id="TBMLZBANUE-text-wrapper" class="TBMLZBANUE-col" style="width:70%;">
+                <div class="TBMLZBANUE-hdr" id="TBMLZBANUE-dochdr"></div>
+                <div id="TBMLZBANUE-text" style="">
+                </div>
+            </div>
+            <div id="TBMLZBANUE-chooser" class="TBMLZBANUE-col" style="width:30%; border-left-width: 0px;"></div>
+        </div>
+        <div class="TBMLZBANUE-row" id="TBMLZBANUE-row2" style="max-height: 14em; min-height: 3em;">
+            <div id="TBMLZBANUE-details" class="TBMLZBANUE-col" style="width:100%; border-top-width: 0px;">
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+    let TBMLZBANUE_data = {"annotation_sets": {"": {"name": "detached-from:", "annotations": [{"type": "Token", "start": 0, "end": 6, "id": 0, "features": {}}, {"type": "Token", "start": 7, "end": 12, "id": 1, "features": {}}, {"type": "Token", "start": 13, "end": 16, "id": 2, "features": {}}, {"type": "Token", "start": 17, "end": 20, "id": 3, "features": {}}, {"type": "Token", "start": 21, "end": 25, "id": 4, "features": {}}, {"type": "Token", "start": 26, "end": 35, "id": 5, "features": {}}, {"type": "Token", "start": 36, "end": 38, "id": 6, "features": {}}, {"type": "Token", "start": 39, "end": 42, "id": 7, "features": {}}, {"type": "Token", "start": 43, "end": 45, "id": 8, "features": {}}, {"type": "Token", "start": 46, "end": 49, "id": 9, "features": {}}, {"type": "Token", "start": 50, "end": 52, "id": 10, "features": {}}, {"type": "Token", "start": 53, "end": 61, "id": 11, "features": {}}, {"type": "Token", "start": 62, "end": 68, "id": 12, "features": {}}, {"type": "Token", "start": 69, "end": 70, "id": 13, "features": {}}, {"type": "Token", "start": 70, "end": 71, "id": 14, "features": {}}, {"type": "Token", "start": 72, "end": 76, "id": 15, "features": {}}, {"type": "Token", "start": 77, "end": 80, "id": 16, "features": {}}, {"type": "Token", "start": 83, "end": 86, "id": 17, "features": {}}, {"type": "Token", "start": 87, "end": 95, "id": 18, "features": {}}, {"type": "Token", "start": 96, "end": 98, "id": 19, "features": {}}, {"type": "Token", "start": 99, "end": 105, "id": 20, "features": {}}, {"type": "Token", "start": 106, "end": 111, "id": 21, "features": {}}, {"type": "Token", "start": 111, "end": 112, "id": 22, "features": {}}, {"type": "Token", "start": 113, "end": 119, "id": 23, "features": {}}, {"type": "Token", "start": 120, "end": 124, "id": 24, "features": {}}, {"type": "Token", "start": 124, "end": 125, "id": 25, "features": {}}, {"type": "Token", "start": 126, "end": 130, "id": 26, "features": {}}, {"type": "Token", "start": 131, "end": 138, "id": 27, "features": {}}, {"type": "Token", "start": 139, "end": 142, "id": 28, "features": {}}, {"type": "Token", "start": 143, "end": 152, "id": 29, "features": {}}, {"type": "Token", "start": 152, "end": 153, "id": 30, "features": {}}, {"type": "Token", "start": 156, "end": 160, "id": 31, "features": {}}, {"type": "Token", "start": 160, "end": 161, "id": 32, "features": {}}, {"type": "Token", "start": 162, "end": 166, "id": 33, "features": {}}, {"type": "Token", "start": 167, "end": 174, "id": 34, "features": {}}, {"type": "Token", "start": 175, "end": 176, "id": 35, "features": {}}, {"type": "Token", "start": 177, "end": 185, "id": 36, "features": {}}, {"type": "Token", "start": 186, "end": 191, "id": 37, "features": {}}, {"type": "Token", "start": 192, "end": 197, "id": 38, "features": {}}, {"type": "Token", "start": 198, "end": 203, "id": 39, "features": {}}, {"type": "Token", "start": 204, "end": 209, "id": 40, "features": {}}, {"type": "Token", "start": 210, "end": 212, "id": 41, "features": {}}, {"type": "Token", "start": 213, "end": 219, "id": 42, "features": {}}, {"type": "Token", "start": 220, "end": 224, "id": 43, "features": {}}, {"type": "Token", "start": 225, "end": 227, "id": 44, "features": {}}, {"type": "Token", "start": 228, "end": 234, "id": 45, "features": {}}, {"type": "Token", "start": 234, "end": 235, "id": 46, "features": {}}, {"type": "Token", "start": 238, "end": 241, "id": 47, "features": {}}, {"type": "Token", "start": 242, "end": 243, "id": 48, "features": {}}, {"type": "Token", "start": 244, "end": 252, "id": 49, "features": {}}, {"type": "Token", "start": 253, "end": 257, "id": 50, "features": {}}, {"type": "Token", "start": 258, "end": 261, "id": 51, "features": {}}, {"type": "Token", "start": 262, "end": 266, "id": 52, "features": {}}, {"type": "Token", "start": 267, "end": 271, "id": 53, "features": {}}, {"type": "Token", "start": 272, "end": 274, "id": 54, "features": {}}, {"type": "Token", "start": 275, "end": 279, "id": 55, "features": {}}, {"type": "Token", "start": 280, "end": 282, "id": 56, "features": {}}, {"type": "Token", "start": 283, "end": 288, "id": 57, "features": {}}, {"type": "Token", "start": 288, "end": 289, "id": 58, "features": {}}, {"type": "Token", "start": 290, "end": 296, "id": 59, "features": {}}, {"type": "Token", "start": 297, "end": 303, "id": 60, "features": {}}, {"type": "Token", "start": 304, "end": 309, "id": 61, "features": {}}, {"type": "Token", "start": 310, "end": 313, "id": 62, "features": {}}, {"type": "Token", "start": 314, "end": 318, "id": 63, "features": {}}, {"type": "Token", "start": 319, "end": 323, "id": 64, "features": {}}, {"type": "Token", "start": 327, "end": 331, "id": 65, "features": {}}, {"type": "Token", "start": 332, "end": 335, "id": 66, "features": {}}, {"type": "Token", "start": 336, "end": 340, "id": 67, "features": {}}, {"type": "Token", "start": 341, "end": 342, "id": 68, "features": {}}, {"type": "Token", "start": 342, "end": 346, "id": 69, "features": {}}, {"type": "Token", "start": 346, "end": 347, "id": 70, "features": {}}, {"type": "Token", "start": 348, "end": 350, "id": 71, "features": {}}, {"type": "Token", "start": 351, "end": 356, "id": 72, "features": {}}, {"type": "Token", "start": 356, "end": 357, "id": 73, "features": {}}, {"type": "Token", "start": 358, "end": 363, "id": 74, "features": {}}, {"type": "Token", "start": 367, "end": 371, "id": 75, "features": {}}, {"type": "Token", "start": 372, "end": 378, "id": 76, "features": {}}, {"type": "Token", "start": 379, "end": 384, "id": 77, "features": {}}, {"type": "Token", "start": 385, "end": 387, "id": 78, "features": {}}, {"type": "Token", "start": 388, "end": 391, "id": 79, "features": {}}, {"type": "Token", "start": 392, "end": 397, "id": 80, "features": {}}, {"type": "Token", "start": 398, "end": 402, "id": 81, "features": {}}, {"type": "Token", "start": 403, "end": 406, "id": 82, "features": {}}, {"type": "Token", "start": 407, "end": 412, "id": 83, "features": {}}, {"type": "Token", "start": 413, "end": 418, "id": 84, "features": {}}, {"type": "Token", "start": 419, "end": 421, "id": 85, "features": {}}, {"type": "Token", "start": 422, "end": 425, "id": 86, "features": {}}, {"type": "Token", "start": 426, "end": 431, "id": 87, "features": {}}, {"type": "Token", "start": 432, "end": 436, "id": 88, "features": {}}, {"type": "Person", "start": 0, "end": 12, "id": 89, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Person", "start": 7, "end": 12, "id": 90, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Country", "start": 43, "end": 45, "id": 91, "features": {"url": "https://en.wikipedia.org/wiki/United_States"}}, {"type": "Person", "start": 62, "end": 76, "id": 92, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Person", "start": 72, "end": 76, "id": 93, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Person", "start": 99, "end": 111, "id": 94, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Person", "start": 106, "end": 111, "id": 95, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Person", "start": 120, "end": 124, "id": 96, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Person", "start": 126, "end": 138, "id": 97, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Person", "start": 131, "end": 138, "id": 98, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Country", "start": 192, "end": 203, "id": 99, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Country", "start": 220, "end": 224, "id": 100, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Country", "start": 275, "end": 279, "id": 101, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 290, "end": 309, "id": 102, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 304, "end": 309, "id": 103, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 342, "end": 346, "id": 104, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 358, "end": 363, "id": 105, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Person", "start": 372, "end": 384, "id": 106, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Person", "start": 379, "end": 384, "id": 107, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Country", "start": 407, "end": 418, "id": 108, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}], "next_annid": 109}}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.\n  Also, lets include a sentence about South Korea which is called \ub300\ud55c\ubbfc\uad6d in Korean.\n  And a sentence with the full name of Iran in Farsi: \u062c\u0645\u0647\u0648\u0631\u06cc \u0627\u0633\u0644\u0627\u0645\u06cc \u0627\u06cc\u0631\u0627\u0646 and also with \n  just the word \"Iran\" in Farsi: \u0627\u06cc\u0631\u0627\u0646 \n  Also barack obama in all lower case and SOUTH KOREA in all upper case\n  ", "features": {}, "offset_type": "j", "name": ""} ; 
+    new gatenlpDocView(new gatenlpDocRep(TBMLZBANUE_data), "TBMLZBANUE-").init();
+    </script>
+  </div>
+
+</div></div>
+
+
+
+
+```python
+for person in doc3.annset().with_type("Person"):
+    print(doc3[person], person)
+
+```
+
+    Barack Obama Annotation(0,12,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),id=89)
+    Obama Annotation(7,12,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),id=90)
+    George W. Bush Annotation(62,76,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),id=92)
+    Bush Annotation(72,76,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),id=93)
+    Donald Trump Annotation(99,111,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),id=94)
+    Trump Annotation(106,111,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),id=95)
+    Bush Annotation(120,124,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),id=96)
+    Bill Clinton Annotation(126,138,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'}),id=97)
+    Clinton Annotation(131,138,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'}),id=98)
+    barack obama Annotation(372,384,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),id=106)
+    obama Annotation(379,384,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),id=107)
+
+
+## TokenGazetteer
+
+Unlike the StringGazetteer, which matches gazetteer strings against the document text, the TokenGazetteer matches tokenstring sequences generated from the gazetteer strings against the sequences of tokens in the document. This is usually done on the `Token` annotations, but the gazetteer can be used on any sequence of annotations of some type. 
+
+Since what needs to get matched is a sequence of token strings, the gazetteer strings need to get converted to sequences of token strings as well when loading from a file. This can be achieved by a simple split-on-whitespace approach (the default) or by specifying a tokenizer or splitter to be used when loading the gazetter entries. When loading a prepared gazetteer list, the splitting into token strings must already have been done. 
+
+## Use a NLTK tokenizer for the gazetteer strings and document
+
+
+```python
+# first create new gazetteer lists from the string-based gazetteer lists we already have
 def text2tokenstrings(text):
     tmpdoc = Document(text)
     tokenizer(tmpdoc)
     tokens = list(tmpdoc.annset().with_type("Token"))
     return [tmpdoc[tok] for tok in tokens]
 
-gazlist = [(text2tokenstrings(txt), feats) for txt, feats in gazlist]
-gazlist
-    
+tok_gazlist1 = [(text2tokenstrings(txt), feats) for txt, feats in gazlist1]
+tok_gazlist2 = [(text2tokenstrings(txt), feats) for txt, feats in gazlist2]
+
+tok_gazlist1, tok_gazlist2
 ```
 
 
 
 
-    [(['Barack', 'Obama'], {'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),
-     (['Obama'], {'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),
-     (['Donald', 'Trump'], {'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),
-     (['Trump'], {'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),
-     (['George', 'W.', 'Bush'],
-      {'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),
-     (['George', 'Bush'], {'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),
-     (['Bush'], {'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),
-     (['Bill', 'Clinton'], {'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'}),
-     (['Clinton'], {'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'})]
+    ([(['Barack', 'Obama'], {'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),
+      (['Obama'], {'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),
+      (['Donald', 'Trump'], {'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),
+      (['Trump'], {'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),
+      (['George', 'W', '.', 'Bush'],
+       {'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),
+      (['George', 'Bush'],
+       {'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),
+      (['Bush'], {'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),
+      (['Bill', 'Clinton'], {'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'}),
+      (['Clinton'], {'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'})],
+     [(['United', 'States'],
+       {'url': 'https://en.wikipedia.org/wiki/United_States'}),
+      (['US'], {'url': 'https://en.wikipedia.org/wiki/United_States'}),
+      (['United', 'Kingdom'],
+       {'url': 'https://en.wikipedia.org/wiki/United_Kingdom'}),
+      (['UK'], {'url': 'https://en.wikipedia.org/wiki/United_Kingdom'}),
+      (['Austria'], {'url': 'https://en.wikipedia.org/wiki/Austria'}),
+      (['South', 'Korea'], {'url': 'https://en.wikipedia.org/wiki/South_Korea'}),
+      (['대한민국'], {'url': 'https://en.wikipedia.org/wiki/South_Korea'}),
+      (['Iran'], {'url': 'https://en.wikipedia.org/wiki/Iran'}),
+      (['جمهوری', 'اسلامی', 'ایران'],
+       {'url': 'https://en.wikipedia.org/wiki/Iran'}),
+      (['ایران'], {'url': 'https://en.wikipedia.org/wiki/Iran'})])
 
 
 
 
 ```python
-# Create the gazetter and apply it to the document
+# Create the token gazetter and and load the two lists, then apply to the document
 
-gazetteer = TokenGazetteer(gazlist, fmt="gazlist", all=True, skip=False, outset="", outtype="Lookup",
-                          annset="", tokentype="Token")
+tok_gaz1 = TokenGazetteer(longest_only=False,
+                          skip_longest=False, outset_name="", ann_type="Lookup",
+                          annset_name="", token_type="Token")
+tok_gaz1.append(source=tok_gazlist1, source_fmt="gazlist", list_type="Person")
+tok_gaz1.append(source=tok_gazlist2, source_fmt="gazlist", list_type="Country")
 
-doc = gazetteer(doc)
-doc
+doc5 = Document(text)
+doc5 = tokenizer(doc5)
+tokens = doc5.annset().with_type("Token")
+doc5 = tok_gaz1(doc5)
+doc5
 ```
 
 
 
 
-<div><style>#MAHLSIOYOH-wrapper { color: black !important; }</style>
-<div id="MAHLSIOYOH-wrapper">
+<div><style>#HDWIRVIKKH-wrapper { color: black !important; }</style>
+<div id="HDWIRVIKKH-wrapper">
 
 <div>
 <style>
-#MAHLSIOYOH-content {
+#HDWIRVIKKH-content {
     width: 100%;
     height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
 
-.MAHLSIOYOH-row {
+.HDWIRVIKKH-row {
     width: 100%;
     display: flex;
     flex-direction: row;
     flex-wrap: nowrap;
 }
 
-.MAHLSIOYOH-col {
+.HDWIRVIKKH-col {
     border: 1px solid grey;
     display: inline-block;
     min-width: 200px;
@@ -794,23 +1206,23 @@ doc
     overflow-y: auto;
 }
 
-.MAHLSIOYOH-hdr {
+.HDWIRVIKKH-hdr {
     font-size: 1.2rem;
     font-weight: bold;
 }
 
-.MAHLSIOYOH-label {
+.HDWIRVIKKH-label {
     margin-bottom: -15px;
     display: block;
 }
 
-.MAHLSIOYOH-input {
+.HDWIRVIKKH-input {
     vertical-align: middle;
     position: relative;
     *overflow: hidden;
 }
 
-#MAHLSIOYOH-popup {
+#HDWIRVIKKH-popup {
     display: none;
     color: black;
     position: absolute;
@@ -825,48 +1237,64 @@ doc
     overflow: auto;
 }
 
-.MAHLSIOYOH-selection {
+.HDWIRVIKKH-selection {
     margin-bottom: 5px;
 }
 
-.MAHLSIOYOH-featuretable {
+.HDWIRVIKKH-featuretable {
     margin-top: 10px;
 }
 
-.MAHLSIOYOH-fname {
+.HDWIRVIKKH-fname {
     text-align: left !important;
     font-weight: bold;
     margin-right: 10px;
 }
-.MAHLSIOYOH-fvalue {
+.HDWIRVIKKH-fvalue {
     text-align: left !important;
 }
 </style>
-  <div id="MAHLSIOYOH-content">
-        <div id="MAHLSIOYOH-popup" style="display: none;">
+  <div id="HDWIRVIKKH-content">
+        <div id="HDWIRVIKKH-popup" style="display: none;">
         </div>
-        <div class="MAHLSIOYOH-row" id="MAHLSIOYOH-row1" style="max-height: 20em; min-height:5em;">
-            <div id="MAHLSIOYOH-text-wrapper" class="MAHLSIOYOH-col" style="width:70%;">
-                <div class="MAHLSIOYOH-hdr" id="MAHLSIOYOH-dochdr"></div>
-                <div id="MAHLSIOYOH-text">
+        <div class="HDWIRVIKKH-row" id="HDWIRVIKKH-row1" style="max-height: 20em; min-height:5em;">
+            <div id="HDWIRVIKKH-text-wrapper" class="HDWIRVIKKH-col" style="width:70%;">
+                <div class="HDWIRVIKKH-hdr" id="HDWIRVIKKH-dochdr"></div>
+                <div id="HDWIRVIKKH-text" style="">
                 </div>
             </div>
-            <div id="MAHLSIOYOH-chooser" class="MAHLSIOYOH-col" style="width:30%; border-left-width: 0px;"></div>
+            <div id="HDWIRVIKKH-chooser" class="HDWIRVIKKH-col" style="width:30%; border-left-width: 0px;"></div>
         </div>
-        <div class="MAHLSIOYOH-row" id="MAHLSIOYOH-row2" style="max-height: 14em; min-height: 3em;">
-            <div id="MAHLSIOYOH-details" class="MAHLSIOYOH-col" style="width:100%; border-top-width: 0px;">
+        <div class="HDWIRVIKKH-row" id="HDWIRVIKKH-row2" style="max-height: 14em; min-height: 3em;">
+            <div id="HDWIRVIKKH-details" class="HDWIRVIKKH-col" style="width:100%; border-top-width: 0px;">
             </div>
         </div>
     </div>
 
-    <script type="application/json" id="MAHLSIOYOH-data">
-    {"annotation_sets": {"": {"name": "detached-from:", "annotations": [{"type": "Token", "start": 0, "end": 6, "id": 0, "features": {}}, {"type": "Token", "start": 7, "end": 12, "id": 1, "features": {}}, {"type": "Token", "start": 13, "end": 16, "id": 2, "features": {}}, {"type": "Token", "start": 17, "end": 20, "id": 3, "features": {}}, {"type": "Token", "start": 21, "end": 25, "id": 4, "features": {}}, {"type": "Token", "start": 26, "end": 35, "id": 5, "features": {}}, {"type": "Token", "start": 36, "end": 38, "id": 6, "features": {}}, {"type": "Token", "start": 39, "end": 42, "id": 7, "features": {}}, {"type": "Token", "start": 43, "end": 45, "id": 8, "features": {}}, {"type": "Token", "start": 46, "end": 49, "id": 9, "features": {}}, {"type": "Token", "start": 50, "end": 52, "id": 10, "features": {}}, {"type": "Token", "start": 53, "end": 61, "id": 11, "features": {}}, {"type": "Token", "start": 62, "end": 68, "id": 12, "features": {}}, {"type": "Token", "start": 69, "end": 71, "id": 13, "features": {}}, {"type": "Token", "start": 72, "end": 76, "id": 14, "features": {}}, {"type": "Token", "start": 77, "end": 80, "id": 15, "features": {}}, {"type": "Token", "start": 83, "end": 86, "id": 16, "features": {}}, {"type": "Token", "start": 87, "end": 95, "id": 17, "features": {}}, {"type": "Token", "start": 96, "end": 98, "id": 18, "features": {}}, {"type": "Token", "start": 99, "end": 105, "id": 19, "features": {}}, {"type": "Token", "start": 106, "end": 112, "id": 20, "features": {}}, {"type": "Token", "start": 113, "end": 119, "id": 21, "features": {}}, {"type": "Token", "start": 120, "end": 124, "id": 22, "features": {}}, {"type": "Token", "start": 124, "end": 125, "id": 23, "features": {}}, {"type": "Token", "start": 126, "end": 130, "id": 24, "features": {}}, {"type": "Token", "start": 131, "end": 138, "id": 25, "features": {}}, {"type": "Token", "start": 139, "end": 142, "id": 26, "features": {}}, {"type": "Token", "start": 143, "end": 152, "id": 27, "features": {}}, {"type": "Token", "start": 152, "end": 153, "id": 28, "features": {}}, {"type": "Lookup", "start": 0, "end": 12, "id": 29, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Lookup", "start": 7, "end": 12, "id": 30, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Lookup", "start": 62, "end": 76, "id": 31, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Lookup", "start": 72, "end": 76, "id": 32, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Lookup", "start": 120, "end": 124, "id": 33, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Lookup", "start": 126, "end": 138, "id": 34, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Lookup", "start": 131, "end": 138, "id": 35, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}], "next_annid": 36}}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.", "features": {}, "offset_type": "j", "name": ""}
-    </script>
     <script type="text/javascript">
-        gatenlp_run("MAHLSIOYOH-");
+    let HDWIRVIKKH_data = {"annotation_sets": {"": {"name": "detached-from:", "annotations": [{"type": "Token", "start": 0, "end": 6, "id": 0, "features": {}}, {"type": "Token", "start": 7, "end": 12, "id": 1, "features": {}}, {"type": "Token", "start": 13, "end": 16, "id": 2, "features": {}}, {"type": "Token", "start": 17, "end": 20, "id": 3, "features": {}}, {"type": "Token", "start": 21, "end": 25, "id": 4, "features": {}}, {"type": "Token", "start": 26, "end": 35, "id": 5, "features": {}}, {"type": "Token", "start": 36, "end": 38, "id": 6, "features": {}}, {"type": "Token", "start": 39, "end": 42, "id": 7, "features": {}}, {"type": "Token", "start": 43, "end": 45, "id": 8, "features": {}}, {"type": "Token", "start": 46, "end": 49, "id": 9, "features": {}}, {"type": "Token", "start": 50, "end": 52, "id": 10, "features": {}}, {"type": "Token", "start": 53, "end": 61, "id": 11, "features": {}}, {"type": "Token", "start": 62, "end": 68, "id": 12, "features": {}}, {"type": "Token", "start": 69, "end": 70, "id": 13, "features": {}}, {"type": "Token", "start": 70, "end": 71, "id": 14, "features": {}}, {"type": "Token", "start": 72, "end": 76, "id": 15, "features": {}}, {"type": "Token", "start": 77, "end": 80, "id": 16, "features": {}}, {"type": "Token", "start": 83, "end": 86, "id": 17, "features": {}}, {"type": "Token", "start": 87, "end": 95, "id": 18, "features": {}}, {"type": "Token", "start": 96, "end": 98, "id": 19, "features": {}}, {"type": "Token", "start": 99, "end": 105, "id": 20, "features": {}}, {"type": "Token", "start": 106, "end": 111, "id": 21, "features": {}}, {"type": "Token", "start": 111, "end": 112, "id": 22, "features": {}}, {"type": "Token", "start": 113, "end": 119, "id": 23, "features": {}}, {"type": "Token", "start": 120, "end": 124, "id": 24, "features": {}}, {"type": "Token", "start": 124, "end": 125, "id": 25, "features": {}}, {"type": "Token", "start": 126, "end": 130, "id": 26, "features": {}}, {"type": "Token", "start": 131, "end": 138, "id": 27, "features": {}}, {"type": "Token", "start": 139, "end": 142, "id": 28, "features": {}}, {"type": "Token", "start": 143, "end": 152, "id": 29, "features": {}}, {"type": "Token", "start": 152, "end": 153, "id": 30, "features": {}}, {"type": "Token", "start": 156, "end": 160, "id": 31, "features": {}}, {"type": "Token", "start": 160, "end": 161, "id": 32, "features": {}}, {"type": "Token", "start": 162, "end": 166, "id": 33, "features": {}}, {"type": "Token", "start": 167, "end": 174, "id": 34, "features": {}}, {"type": "Token", "start": 175, "end": 176, "id": 35, "features": {}}, {"type": "Token", "start": 177, "end": 185, "id": 36, "features": {}}, {"type": "Token", "start": 186, "end": 191, "id": 37, "features": {}}, {"type": "Token", "start": 192, "end": 197, "id": 38, "features": {}}, {"type": "Token", "start": 198, "end": 203, "id": 39, "features": {}}, {"type": "Token", "start": 204, "end": 209, "id": 40, "features": {}}, {"type": "Token", "start": 210, "end": 212, "id": 41, "features": {}}, {"type": "Token", "start": 213, "end": 219, "id": 42, "features": {}}, {"type": "Token", "start": 220, "end": 224, "id": 43, "features": {}}, {"type": "Token", "start": 225, "end": 227, "id": 44, "features": {}}, {"type": "Token", "start": 228, "end": 234, "id": 45, "features": {}}, {"type": "Token", "start": 234, "end": 235, "id": 46, "features": {}}, {"type": "Token", "start": 238, "end": 241, "id": 47, "features": {}}, {"type": "Token", "start": 242, "end": 243, "id": 48, "features": {}}, {"type": "Token", "start": 244, "end": 252, "id": 49, "features": {}}, {"type": "Token", "start": 253, "end": 257, "id": 50, "features": {}}, {"type": "Token", "start": 258, "end": 261, "id": 51, "features": {}}, {"type": "Token", "start": 262, "end": 266, "id": 52, "features": {}}, {"type": "Token", "start": 267, "end": 271, "id": 53, "features": {}}, {"type": "Token", "start": 272, "end": 274, "id": 54, "features": {}}, {"type": "Token", "start": 275, "end": 279, "id": 55, "features": {}}, {"type": "Token", "start": 280, "end": 282, "id": 56, "features": {}}, {"type": "Token", "start": 283, "end": 288, "id": 57, "features": {}}, {"type": "Token", "start": 288, "end": 289, "id": 58, "features": {}}, {"type": "Token", "start": 290, "end": 296, "id": 59, "features": {}}, {"type": "Token", "start": 297, "end": 303, "id": 60, "features": {}}, {"type": "Token", "start": 304, "end": 309, "id": 61, "features": {}}, {"type": "Token", "start": 310, "end": 313, "id": 62, "features": {}}, {"type": "Token", "start": 314, "end": 318, "id": 63, "features": {}}, {"type": "Token", "start": 319, "end": 323, "id": 64, "features": {}}, {"type": "Token", "start": 327, "end": 331, "id": 65, "features": {}}, {"type": "Token", "start": 332, "end": 335, "id": 66, "features": {}}, {"type": "Token", "start": 336, "end": 340, "id": 67, "features": {}}, {"type": "Token", "start": 341, "end": 342, "id": 68, "features": {}}, {"type": "Token", "start": 342, "end": 346, "id": 69, "features": {}}, {"type": "Token", "start": 346, "end": 347, "id": 70, "features": {}}, {"type": "Token", "start": 348, "end": 350, "id": 71, "features": {}}, {"type": "Token", "start": 351, "end": 356, "id": 72, "features": {}}, {"type": "Token", "start": 356, "end": 357, "id": 73, "features": {}}, {"type": "Token", "start": 358, "end": 363, "id": 74, "features": {}}, {"type": "Token", "start": 367, "end": 371, "id": 75, "features": {}}, {"type": "Token", "start": 372, "end": 378, "id": 76, "features": {}}, {"type": "Token", "start": 379, "end": 384, "id": 77, "features": {}}, {"type": "Token", "start": 385, "end": 387, "id": 78, "features": {}}, {"type": "Token", "start": 388, "end": 391, "id": 79, "features": {}}, {"type": "Token", "start": 392, "end": 397, "id": 80, "features": {}}, {"type": "Token", "start": 398, "end": 402, "id": 81, "features": {}}, {"type": "Token", "start": 403, "end": 406, "id": 82, "features": {}}, {"type": "Token", "start": 407, "end": 412, "id": 83, "features": {}}, {"type": "Token", "start": 413, "end": 418, "id": 84, "features": {}}, {"type": "Token", "start": 419, "end": 421, "id": 85, "features": {}}, {"type": "Token", "start": 422, "end": 425, "id": 86, "features": {}}, {"type": "Token", "start": 426, "end": 431, "id": 87, "features": {}}, {"type": "Token", "start": 432, "end": 436, "id": 88, "features": {}}, {"type": "Person", "start": 0, "end": 12, "id": 89, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Person", "start": 7, "end": 12, "id": 90, "features": {"url": "https://en.wikipedia.org/wiki/Barack_Obama"}}, {"type": "Country", "start": 43, "end": 45, "id": 91, "features": {"url": "https://en.wikipedia.org/wiki/United_States"}}, {"type": "Person", "start": 62, "end": 76, "id": 92, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Person", "start": 72, "end": 76, "id": 93, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Person", "start": 99, "end": 111, "id": 94, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Person", "start": 106, "end": 111, "id": 95, "features": {"url": "https://en.wikipedia.org/wiki/Donald_Trump"}}, {"type": "Person", "start": 120, "end": 124, "id": 96, "features": {"url": "https://en.wikipedia.org/wiki/George_W._Bush"}}, {"type": "Person", "start": 126, "end": 138, "id": 97, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Person", "start": 131, "end": 138, "id": 98, "features": {"url": "https://en.wikipedia.org/wiki/Bill_Clinton"}}, {"type": "Country", "start": 192, "end": 203, "id": 99, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Country", "start": 220, "end": 224, "id": 100, "features": {"url": "https://en.wikipedia.org/wiki/South_Korea"}}, {"type": "Country", "start": 275, "end": 279, "id": 101, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 290, "end": 309, "id": 102, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 304, "end": 309, "id": 103, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 342, "end": 346, "id": 104, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}, {"type": "Country", "start": 358, "end": 363, "id": 105, "features": {"url": "https://en.wikipedia.org/wiki/Iran"}}], "next_annid": 106}}, "text": "Barack Obama was the 44th president of the US and he followed George W. Bush and\n  was followed by Donald Trump. Before Bush, Bill Clinton was president.\n  Also, lets include a sentence about South Korea which is called \ub300\ud55c\ubbfc\uad6d in Korean.\n  And a sentence with the full name of Iran in Farsi: \u062c\u0645\u0647\u0648\u0631\u06cc \u0627\u0633\u0644\u0627\u0645\u06cc \u0627\u06cc\u0631\u0627\u0646 and also with \n  just the word \"Iran\" in Farsi: \u0627\u06cc\u0631\u0627\u0646 \n  Also barack obama in all lower case and SOUTH KOREA in all upper case\n  ", "features": {}, "offset_type": "j", "name": ""} ; 
+    new gatenlpDocView(new gatenlpDocRep(HDWIRVIKKH_data), "HDWIRVIKKH-").init();
     </script>
   </div>
 
 </div></div>
 
+
+
+
+```python
+for person in doc5.annset().with_type("Person"):
+    print(doc5[person], person)
+
+```
+
+    Barack Obama Annotation(0,12,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),id=89)
+    Obama Annotation(7,12,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Barack_Obama'}),id=90)
+    George W. Bush Annotation(62,76,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),id=92)
+    Bush Annotation(72,76,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),id=93)
+    Donald Trump Annotation(99,111,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),id=94)
+    Trump Annotation(106,111,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Donald_Trump'}),id=95)
+    Bush Annotation(120,124,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/George_W._Bush'}),id=96)
+    Bill Clinton Annotation(126,138,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'}),id=97)
+    Clinton Annotation(131,138,Person,features=Features({'url': 'https://en.wikipedia.org/wiki/Bill_Clinton'}),id=98)
 

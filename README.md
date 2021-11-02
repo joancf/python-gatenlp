@@ -14,12 +14,16 @@
 [![Python 3](https://pyup.io/repos/github/GateNLP/python-gatenlp/python-3-shield.svg)](https://pyup.io/repos/github/GateNLP/python-gatenlp/)
 
 
-This is a package for representing the basic elements of text processing
-and NLP in a way that is very similar to the
-[Java GATE NLP](https://gate.ac.uk/)
-framework, 
-for manipulating GateNLP documents and
-for interacting with GATE Java and the GATE python plugin.
+![Python GateNLP](https://github.com/GateNLP/python-gatenlp/blob/main/docs/logo/gateNLP-423x145.png)
+
+Python package for:
+* Representing documents, annotations, annotation and document features etc. 
+* Processing documents with powerful NLP libraries like Stanza, Spacy, NLTK and represent results as gatenlp annotations and features
+* Visualize annotations and features using interactive HTML and allow those visualizations to be included in Jupyter or Colab notebooks
+* Using a powerful pattern matching library (PAMPAC) to match complex patterns based on text, annotations and features and create new annotations
+* Interact with and use Java GATE from Python
+* Allow to use Python processing from Java GATE via the GATE Python plugin
+* Provide abstractions for building complex processing pipelines
 
 ## Documentation and feedback
 

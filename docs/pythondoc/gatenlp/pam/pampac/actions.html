@@ -30,16 +30,18 @@
 <pre><code class="python">&#34;&#34;&#34;
 Module for PAMPAC action classes.
 &#34;&#34;&#34;
-from copy import deepcopy
+from abc import ABC, abstractmethod
 from gatenlp import Annotation
 from gatenlp.features import Features
 
 
-class Getter:
+class Getter(ABC):
     &#34;&#34;&#34;
     Common base class of all Getter helper classes.
     &#34;&#34;&#34;
-    pass
+    @abstractmethod
+    def __call__(self, succ, context=None, location=None):
+        pass
 
 
 def _get_match(succ, name, resultidx=0, matchidx=0, silent_fail=False):
@@ -129,7 +131,7 @@ class Actions:
         Args:
             *actions: any number of actions to run.
         &#34;&#34;&#34;
-        self.actions = actions
+        self.actions = list(actions)
 
     def __call__(self, succ, context=None, location=None):
         &#34;&#34;&#34;
@@ -156,6 +158,19 @@ class Actions:
                 ret.append(action(succ, context=context, location=location))
             return ret
 
+    def add(self, action, tofront=False):
+        &#34;&#34;&#34;
+        Add an action to the list of existing actions.
+
+        Args:
+            action: the action to add
+            tofront: if True, add as first instead of last action
+        &#34;&#34;&#34;
+        if tofront:
+            self.actions.insert(0, action)
+        else:
+            self.actions.append(action)
+
 
 class AddAnn:
     &#34;&#34;&#34;
@@ -173,7 +188,7 @@ class AddAnn:
             resultidx=0,
             matchidx=0,
             silent_fail=False,
-        ):  # pylint: disable=W0622
+    ):  # pylint: disable=W0622
         &#34;&#34;&#34;
         Create an action for adding a new annotation to the outset.
 
@@ -258,16 +273,20 @@ class AddAnn:
         if self.matchidx is None:
             for matchidx in range(len(succ[resultidx].matches)):
                 span = _get_span(succ, self.name, resultidx, matchidx, self.silent_fail)
+                # print(f&#34;DEBUG: midx=None, running for {matchidx}, span={span}&#34;)
                 self._add4span(span, succ, context, location)
         else:
             span = _get_span(succ, self.name, resultidx, self.matchidx, self.silent_fail)
+            # print(f&#34;DEBUG: running for {self.matchidx}, span={span}&#34;)
             self._add4span(span, succ, context, location)
 
     def __call__(self, succ, context=None, location=None):
         if self.resultidx is None:
             for resultidx in range(len(succ)):
+                # print(f&#34;DEBUG: ridx=None, running for {resultidx}&#34;)
                 self._add4result(succ, resultidx, context, location)
         else:
+            # print(f&#34;DEBUG: running for {self.resultidx}&#34;)
             self._add4result(succ, self.resultidx, context, location)
 
 
@@ -287,7 +306,7 @@ class UpdateAnnFeatures:
             matchidx=0,
             silent_fail=False,
             deepcopy=False
-        ):
+    ):
         &#34;&#34;&#34;
         Create an UpdateAnnFeatures action. The features to use for updating can either come from
         an existing annotation, an annotation fetched with a GetAnn annotation getter, or from a
@@ -386,7 +405,8 @@ class RemoveAnn:
     &#34;&#34;&#34;
     Action for removing an anntoation.
     &#34;&#34;&#34;
-    def __init__(self, name,
+    def __init__(self, name=None,
+                 annset=None,
                  resultidx=0, matchidx=0,
                  silent_fail=True):
         &#34;&#34;&#34;
@@ -394,11 +414,18 @@ class RemoveAnn:
 
         Args:
             name: the name of a match from which to get the annotation to remove
+            annset: the annotation set to remove the annotation from. This must be a mutable set and
+                usually should be an attached set and has to be a set which contains the annotation
+                to be removed. Note that with complex patterns this may remove annotations which are
+                still being matched from the copy in the pampac context at a later time!
             resultidx: index of the result to use, if several (default: 0)
             matchidx: index of the match to use, if several (default: 0)
             silent_fail: if True, silently ignore the error of no annotation to get removed
         &#34;&#34;&#34;
+        assert name is not None
+        assert annset is not None
         self.name = name
+        self.annset = annset
         self.resultidx = resultidx
         self.matchidx = matchidx
         self.silent_fail = silent_fail
@@ -420,7 +447,7 @@ class RemoveAnn:
                 raise Exception(
                     f&#34;Could not find an annotation for the name {self.name}&#34;
                 )
-        context.annset.remove(theann)</code></pre>
+        self.annset.remove(theann)</code></pre>
 </details>
 </section>
 <section>
@@ -462,7 +489,7 @@ class RemoveAnn:
         Args:
             *actions: any number of actions to run.
         &#34;&#34;&#34;
-        self.actions = actions
+        self.actions = list(actions)
 
     def __call__(self, succ, context=None, location=None):
         &#34;&#34;&#34;
@@ -487,8 +514,37 @@ class RemoveAnn:
             ret = []
             for action in self.actions:
                 ret.append(action(succ, context=context, location=location))
-            return ret</code></pre>
+            return ret
+
+    def add(self, action, tofront=False):
+        &#34;&#34;&#34;
+        Add an action to the list of existing actions.
+
+        Args:
+            action: the action to add
+            tofront: if True, add as first instead of last action
+        &#34;&#34;&#34;
+        if tofront:
+            self.actions.insert(0, action)
+        else:
+            self.actions.append(action)</code></pre>
 </details>
+<h3>Methods</h3>
+<dl>
+<dt id="gatenlp.pam.pampac.actions.Actions.add"><code class="name flex">
+<span>def <span class="ident">add</span></span>(<span>self, action, tofront=False)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Add an action to the list of existing actions.</p>
+<h2 id="args">Args</h2>
+<dl>
+<dt><strong><code>action</code></strong></dt>
+<dd>the action to add</dd>
+<dt><strong><code>tofront</code></strong></dt>
+<dd>if True, add as first instead of last action</dd>
+</dl></div>
+</dd>
+</dl>
 </dd>
 <dt id="gatenlp.pam.pampac.actions.AddAnn"><code class="flex name class">
 <span>class <span class="ident">AddAnn</span></span>
@@ -546,7 +602,7 @@ otherwise raises an Exception.</dd>
             resultidx=0,
             matchidx=0,
             silent_fail=False,
-        ):  # pylint: disable=W0622
+    ):  # pylint: disable=W0622
         &#34;&#34;&#34;
         Create an action for adding a new annotation to the outset.
 
@@ -631,16 +687,20 @@ otherwise raises an Exception.</dd>
         if self.matchidx is None:
             for matchidx in range(len(succ[resultidx].matches)):
                 span = _get_span(succ, self.name, resultidx, matchidx, self.silent_fail)
+                # print(f&#34;DEBUG: midx=None, running for {matchidx}, span={span}&#34;)
                 self._add4span(span, succ, context, location)
         else:
             span = _get_span(succ, self.name, resultidx, self.matchidx, self.silent_fail)
+            # print(f&#34;DEBUG: running for {self.matchidx}, span={span}&#34;)
             self._add4span(span, succ, context, location)
 
     def __call__(self, succ, context=None, location=None):
         if self.resultidx is None:
             for resultidx in range(len(succ)):
+                # print(f&#34;DEBUG: ridx=None, running for {resultidx}&#34;)
                 self._add4result(succ, resultidx, context, location)
         else:
+            # print(f&#34;DEBUG: running for {self.resultidx}&#34;)
             self._add4result(succ, self.resultidx, context, location)</code></pre>
 </details>
 </dd>
@@ -653,12 +713,18 @@ otherwise raises an Exception.</dd>
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">class Getter:
+<pre><code class="python">class Getter(ABC):
     &#34;&#34;&#34;
     Common base class of all Getter helper classes.
     &#34;&#34;&#34;
-    pass</code></pre>
+    @abstractmethod
+    def __call__(self, succ, context=None, location=None):
+        pass</code></pre>
 </details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li>abc.ABC</li>
+</ul>
 <h3>Subclasses</h3>
 <ul class="hlist">
 <li><a title="gatenlp.pam.pampac.getters.GetAnn" href="getters.html#gatenlp.pam.pampac.getters.GetAnn">GetAnn</a></li>
@@ -673,7 +739,7 @@ otherwise raises an Exception.</dd>
 </dd>
 <dt id="gatenlp.pam.pampac.actions.RemoveAnn"><code class="flex name class">
 <span>class <span class="ident">RemoveAnn</span></span>
-<span>(</span><span>name, resultidx=0, matchidx=0, silent_fail=True)</span>
+<span>(</span><span>name=None, annset=None, resultidx=0, matchidx=0, silent_fail=True)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Action for removing an anntoation.</p>
@@ -682,6 +748,11 @@ otherwise raises an Exception.</dd>
 <dl>
 <dt><strong><code>name</code></strong></dt>
 <dd>the name of a match from which to get the annotation to remove</dd>
+<dt><strong><code>annset</code></strong></dt>
+<dd>the annotation set to remove the annotation from. This must be a mutable set and
+usually should be an attached set and has to be a set which contains the annotation
+to be removed. Note that with complex patterns this may remove annotations which are
+still being matched from the copy in the pampac context at a later time!</dd>
 <dt><strong><code>resultidx</code></strong></dt>
 <dd>index of the result to use, if several (default: 0)</dd>
 <dt><strong><code>matchidx</code></strong></dt>
@@ -697,7 +768,8 @@ otherwise raises an Exception.</dd>
     &#34;&#34;&#34;
     Action for removing an anntoation.
     &#34;&#34;&#34;
-    def __init__(self, name,
+    def __init__(self, name=None,
+                 annset=None,
                  resultidx=0, matchidx=0,
                  silent_fail=True):
         &#34;&#34;&#34;
@@ -705,11 +777,18 @@ otherwise raises an Exception.</dd>
 
         Args:
             name: the name of a match from which to get the annotation to remove
+            annset: the annotation set to remove the annotation from. This must be a mutable set and
+                usually should be an attached set and has to be a set which contains the annotation
+                to be removed. Note that with complex patterns this may remove annotations which are
+                still being matched from the copy in the pampac context at a later time!
             resultidx: index of the result to use, if several (default: 0)
             matchidx: index of the match to use, if several (default: 0)
             silent_fail: if True, silently ignore the error of no annotation to get removed
         &#34;&#34;&#34;
+        assert name is not None
+        assert annset is not None
         self.name = name
+        self.annset = annset
         self.resultidx = resultidx
         self.matchidx = matchidx
         self.silent_fail = silent_fail
@@ -731,7 +810,7 @@ otherwise raises an Exception.</dd>
                 raise Exception(
                     f&#34;Could not find an annotation for the name {self.name}&#34;
                 )
-        context.annset.remove(theann)</code></pre>
+        self.annset.remove(theann)</code></pre>
 </details>
 </dd>
 <dt id="gatenlp.pam.pampac.actions.UpdateAnnFeatures"><code class="flex name class">
@@ -790,7 +869,7 @@ is created.</dd>
             matchidx=0,
             silent_fail=False,
             deepcopy=False
-        ):
+    ):
         &#34;&#34;&#34;
         Create an UpdateAnnFeatures action. The features to use for updating can either come from
         an existing annotation, an annotation fetched with a GetAnn annotation getter, or from a
@@ -903,6 +982,9 @@ is created.</dd>
 <ul>
 <li>
 <h4><code><a title="gatenlp.pam.pampac.actions.Actions" href="#gatenlp.pam.pampac.actions.Actions">Actions</a></code></h4>
+<ul class="">
+<li><code><a title="gatenlp.pam.pampac.actions.Actions.add" href="#gatenlp.pam.pampac.actions.Actions.add">add</a></code></li>
+</ul>
 </li>
 <li>
 <h4><code><a title="gatenlp.pam.pampac.actions.AddAnn" href="#gatenlp.pam.pampac.actions.AddAnn">AddAnn</a></code></h4>

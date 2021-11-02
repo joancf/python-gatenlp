@@ -50,7 +50,7 @@ class Tokenizer(Annotator):
     may add word annotations for multi-word tokens and and multi-token words.
 
     Tokenizers should have the fields token_type, space_token_type, and word_type which identify
-    the types of annotations it creates, and out_set to identify the output annotation set.
+    the types of annotations it creates, and outset_name to identify the output annotation set.
 
     &#34;&#34;&#34;
 
@@ -63,15 +63,24 @@ class NLTKTokenizer(Tokenizer):
     &#34;&#34;&#34;
 
     def __init__(
-        self, nltk_tokenizer=None, out_set=&#34;&#34;, token_type=&#34;Token&#34;, space_token_type=None
+        self, nltk_tokenizer=None, nltk_sent_tokenizer=None, outset_name=&#34;&#34;, token_type=&#34;Token&#34;, space_token_type=None
     ):
         &#34;&#34;&#34;
         Creates the tokenizer. NOTE: this tokenizer does NOT create space tokens by default
 
         Args:
             nltk_tokenizer: either a class or instance of an nltk tokenizer, or a tokenizer function
-                that returns a list of tokens
-            out_set: annotation set to put the Token annotations in
+                that returns a list of tokens. NOTE: this must be a NLTK tokenizer which supports the
+                span_tokenize method or a tokenizer or function that is not destructive, i.e. it must
+                be possible to align the created token strings back to the original text. The created
+                token strings must not be modified from the original text e.g. &#34; converted to `` or
+                similar. For this reason the standard NLTKWordTokenizer cannot be used.
+            nltk_sent_tokenizer: some NLTK tokenizers only work correctly if applied to each sentence
+                separately after the text is splitted into sentences. This allows to specify an NLTK
+                sentence splitter or a sentence splitting function to be run before the word tokenizer.
+                Note: if the sentence tokenizer is used the `span_tokenize` method of a tokenizer will
+                not be used if it exists, the `tokenize` method will be used.
+            outset_name: annotation set to put the Token annotations in
             token_type: annotation type of the Token annotations
         &#34;&#34;&#34;
         assert nltk_tokenizer is not None
@@ -88,11 +97,18 @@ class NLTKTokenizer(Tokenizer):
             self.has_span_tokenize = False
             self.is_function = True
         else:
-            try:
-                self.tokenizer.span_tokenize(&#34;text&#34;)
-            except Exception as ex:
+            if nltk_sent_tokenizer is not None:
                 self.has_span_tokenize = False
-        self.out_set = out_set
+            else:
+                try:
+                    self.tokenizer.span_tokenize(&#34;text&#34;)
+                except Exception as ex:
+                    self.has_span_tokenize = False
+        self.sent_tokenizer = nltk_sent_tokenizer
+        self.sent_is_function = False
+        if self.sent_tokenizer and isinstance(self.sent_tokenizer, types.FunctionType):
+            self.sent_is_function = True
+        self.outset_name = outset_name
         self.token_type = token_type
         self.space_token_type = space_token_type
 
@@ -103,12 +119,23 @@ class NLTKTokenizer(Tokenizer):
             # this may return a generator, convert to list so we can reuse
             spans = list(self.tokenizer.span_tokenize(doc.text))
         else:
-            if self.is_function:
-                tks = self.tokenizer(doc.text)
+            if self.sent_tokenizer:
+                if self.sent_is_function:
+                    sents = self.sent_tokenizer(doc.text)
+                else:
+                    sents = self.sent_tokenizer.tokenize(doc.text)
             else:
-                tks = self.tokenizer.tokenize(doc.text)
-            spans = align_tokens(tks, doc.text)
-        annset = doc.annset(self.out_set)
+                sents = [doc.text]
+            print(f&#34;DEBUG: sentences= {sents}&#34;)
+            if self.is_function:
+                tks = [self.tokenizer(s) for s in sents]
+            else:
+                tks = [self.tokenizer.tokenize(s) for s in sents]
+            flat_tks = []
+            for tk in tks:
+                flat_tks.extend(tk)
+            spans = align_tokens(flat_tks, doc.text)
+        annset = doc.annset(self.outset_name)
         for span in spans:
             annset.add(span[0], span[1], self.token_type)
         if self.space_token_type is not None:
@@ -133,7 +160,7 @@ class SplitPatternTokenizer(Tokenizer):
     def __init__(self,
                  split_pattern: any = regex.compile(r&#34;\s+&#34;),
                  token_pattern: any = None,
-                 out_set: str = &#34;&#34;,
+                 outset_name: str = &#34;&#34;,
                  token_type: str = &#34;Token&#34;,
                  space_token_type: str = None):
         &#34;&#34;&#34;
@@ -146,14 +173,14 @@ class SplitPatternTokenizer(Tokenizer):
             token_pattern: if not None, a token annotation is only created if the span between splits (or the begin
                 or end of document and a split) matches this pattern: if a literal string, the literal string must
                 be present, otherwise must be a compiled regular expression that is found.
-            out_set: the destination annotation set
+            outset_name: the destination annotation set
             token_type: the type of annotation to create for the spans between splits
             space_token_type: if not None, the type of annotation to create for the splits. NOTE: non-splits which
                 do not match the token_pattern are not annotated by this!
         &#34;&#34;&#34;
         self.split_pattern = split_pattern
         self.token_pattern = token_pattern
-        self.outset = out_set
+        self.outset_name = outset_name
         self.token_type = token_type
         self.space_token_type = space_token_type
 
@@ -164,7 +191,7 @@ class SplitPatternTokenizer(Tokenizer):
             return self.token_pattern.search(text)
 
     def __call__(self, doc, **kwargs):
-        annset = doc.annset(self.outset)
+        annset = doc.annset(self.outset_name)
         last_off = 0
         if isinstance(self.split_pattern, str):
             l = len(self.split_pattern)
@@ -200,11 +227,11 @@ class ParagraphTokenizer(SplitPatternTokenizer):
     This is a convenience subclass of SplitPatternTokenizer, for more complex ways to split into paragraphs,
     that class should get used directly.
     &#34;&#34;&#34;
-    def __init__(self, n_nl=1, out_set=&#34;&#34;, paragraph_type=&#34;Paragraph&#34;, split_type=None):
+    def __init__(self, n_nl=1, outset_name=&#34;&#34;, paragraph_type=&#34;Paragraph&#34;, split_type=None):
         import re
         nl_str = &#34;\\n&#34; * n_nl
         pat = re.compile(nl_str+&#34;\\n*&#34;)
-        super().__init__(split_pattern=pat, token_type=paragraph_type, space_token_type=split_type, out_set=out_set)</code></pre>
+        super().__init__(split_pattern=pat, token_type=paragraph_type, space_token_type=split_type, outset_name=outset_name)</code></pre>
 </details>
 </section>
 <section>
@@ -218,7 +245,7 @@ class ParagraphTokenizer(SplitPatternTokenizer):
 <dl>
 <dt id="gatenlp.processing.tokenizer.NLTKTokenizer"><code class="flex name class">
 <span>class <span class="ident">NLTKTokenizer</span></span>
-<span>(</span><span>nltk_tokenizer=None, out_set='', token_type='Token', space_token_type=None)</span>
+<span>(</span><span>nltk_tokenizer=None, nltk_sent_tokenizer=None, outset_name='', token_type='Token', space_token_type=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Uses a NLTK Tokenizer to perform tokenization.</p>
@@ -227,8 +254,18 @@ class ParagraphTokenizer(SplitPatternTokenizer):
 <dl>
 <dt><strong><code>nltk_tokenizer</code></strong></dt>
 <dd>either a class or instance of an nltk tokenizer, or a tokenizer function
-that returns a list of tokens</dd>
-<dt><strong><code>out_set</code></strong></dt>
+that returns a list of tokens. NOTE: this must be a NLTK tokenizer which supports the
+span_tokenize method or a tokenizer or function that is not destructive, i.e. it must
+be possible to align the created token strings back to the original text. The created
+token strings must not be modified from the original text e.g. " converted to `` or
+similar. For this reason the standard NLTKWordTokenizer cannot be used.</dd>
+<dt><strong><code>nltk_sent_tokenizer</code></strong></dt>
+<dd>some NLTK tokenizers only work correctly if applied to each sentence
+separately after the text is splitted into sentences. This allows to specify an NLTK
+sentence splitter or a sentence splitting function to be run before the word tokenizer.
+Note: if the sentence tokenizer is used the <code>span_tokenize</code> method of a tokenizer will
+not be used if it exists, the <code>tokenize</code> method will be used.</dd>
+<dt><strong><code>outset_name</code></strong></dt>
 <dd>annotation set to put the Token annotations in</dd>
 <dt><strong><code>token_type</code></strong></dt>
 <dd>annotation type of the Token annotations</dd>
@@ -243,15 +280,24 @@ that returns a list of tokens</dd>
     &#34;&#34;&#34;
 
     def __init__(
-        self, nltk_tokenizer=None, out_set=&#34;&#34;, token_type=&#34;Token&#34;, space_token_type=None
+        self, nltk_tokenizer=None, nltk_sent_tokenizer=None, outset_name=&#34;&#34;, token_type=&#34;Token&#34;, space_token_type=None
     ):
         &#34;&#34;&#34;
         Creates the tokenizer. NOTE: this tokenizer does NOT create space tokens by default
 
         Args:
             nltk_tokenizer: either a class or instance of an nltk tokenizer, or a tokenizer function
-                that returns a list of tokens
-            out_set: annotation set to put the Token annotations in
+                that returns a list of tokens. NOTE: this must be a NLTK tokenizer which supports the
+                span_tokenize method or a tokenizer or function that is not destructive, i.e. it must
+                be possible to align the created token strings back to the original text. The created
+                token strings must not be modified from the original text e.g. &#34; converted to `` or
+                similar. For this reason the standard NLTKWordTokenizer cannot be used.
+            nltk_sent_tokenizer: some NLTK tokenizers only work correctly if applied to each sentence
+                separately after the text is splitted into sentences. This allows to specify an NLTK
+                sentence splitter or a sentence splitting function to be run before the word tokenizer.
+                Note: if the sentence tokenizer is used the `span_tokenize` method of a tokenizer will
+                not be used if it exists, the `tokenize` method will be used.
+            outset_name: annotation set to put the Token annotations in
             token_type: annotation type of the Token annotations
         &#34;&#34;&#34;
         assert nltk_tokenizer is not None
@@ -268,11 +314,18 @@ that returns a list of tokens</dd>
             self.has_span_tokenize = False
             self.is_function = True
         else:
-            try:
-                self.tokenizer.span_tokenize(&#34;text&#34;)
-            except Exception as ex:
+            if nltk_sent_tokenizer is not None:
                 self.has_span_tokenize = False
-        self.out_set = out_set
+            else:
+                try:
+                    self.tokenizer.span_tokenize(&#34;text&#34;)
+                except Exception as ex:
+                    self.has_span_tokenize = False
+        self.sent_tokenizer = nltk_sent_tokenizer
+        self.sent_is_function = False
+        if self.sent_tokenizer and isinstance(self.sent_tokenizer, types.FunctionType):
+            self.sent_is_function = True
+        self.outset_name = outset_name
         self.token_type = token_type
         self.space_token_type = space_token_type
 
@@ -283,12 +336,23 @@ that returns a list of tokens</dd>
             # this may return a generator, convert to list so we can reuse
             spans = list(self.tokenizer.span_tokenize(doc.text))
         else:
-            if self.is_function:
-                tks = self.tokenizer(doc.text)
+            if self.sent_tokenizer:
+                if self.sent_is_function:
+                    sents = self.sent_tokenizer(doc.text)
+                else:
+                    sents = self.sent_tokenizer.tokenize(doc.text)
             else:
-                tks = self.tokenizer.tokenize(doc.text)
-            spans = align_tokens(tks, doc.text)
-        annset = doc.annset(self.out_set)
+                sents = [doc.text]
+            print(f&#34;DEBUG: sentences= {sents}&#34;)
+            if self.is_function:
+                tks = [self.tokenizer(s) for s in sents]
+            else:
+                tks = [self.tokenizer.tokenize(s) for s in sents]
+            flat_tks = []
+            for tk in tks:
+                flat_tks.extend(tk)
+            spans = align_tokens(flat_tks, doc.text)
+        annset = doc.annset(self.outset_name)
         for span in spans:
             annset.add(span[0], span[1], self.token_type)
         if self.space_token_type is not None:
@@ -324,7 +388,7 @@ that returns a list of tokens</dd>
 </dd>
 <dt id="gatenlp.processing.tokenizer.ParagraphTokenizer"><code class="flex name class">
 <span>class <span class="ident">ParagraphTokenizer</span></span>
-<span>(</span><span>n_nl=1, out_set='', paragraph_type='Paragraph', split_type=None)</span>
+<span>(</span><span>n_nl=1, outset_name='', paragraph_type='Paragraph', split_type=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Splits a document into paragraphs, based on the presence of one or more or two or more new lines.
@@ -341,7 +405,7 @@ tokens (default: any sequence of one or more whitespace characters)</dd>
 <dd>if not None, a token annotation is only created if the span between splits (or the begin
 or end of document and a split) matches this pattern: if a literal string, the literal string must
 be present, otherwise must be a compiled regular expression that is found.</dd>
-<dt><strong><code>out_set</code></strong></dt>
+<dt><strong><code>outset_name</code></strong></dt>
 <dd>the destination annotation set</dd>
 <dt><strong><code>token_type</code></strong></dt>
 <dd>the type of annotation to create for the spans between splits</dd>
@@ -359,11 +423,11 @@ do not match the token_pattern are not annotated by this!</dd>
     This is a convenience subclass of SplitPatternTokenizer, for more complex ways to split into paragraphs,
     that class should get used directly.
     &#34;&#34;&#34;
-    def __init__(self, n_nl=1, out_set=&#34;&#34;, paragraph_type=&#34;Paragraph&#34;, split_type=None):
+    def __init__(self, n_nl=1, outset_name=&#34;&#34;, paragraph_type=&#34;Paragraph&#34;, split_type=None):
         import re
         nl_str = &#34;\\n&#34; * n_nl
         pat = re.compile(nl_str+&#34;\\n*&#34;)
-        super().__init__(split_pattern=pat, token_type=paragraph_type, space_token_type=split_type, out_set=out_set)</code></pre>
+        super().__init__(split_pattern=pat, token_type=paragraph_type, space_token_type=split_type, outset_name=outset_name)</code></pre>
 </details>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -387,7 +451,7 @@ do not match the token_pattern are not annotated by this!</dd>
 </dd>
 <dt id="gatenlp.processing.tokenizer.SplitPatternTokenizer"><code class="flex name class">
 <span>class <span class="ident">SplitPatternTokenizer</span></span>
-<span>(</span><span>split_pattern: <built-in function any> = regex.Regex('\\s+', flags=regex.V0), token_pattern: <built-in function any> = None, out_set: str = '', token_type: str = 'Token', space_token_type: str = None)</span>
+<span>(</span><span>split_pattern: <built-in function any> = regex.Regex('\\s+', flags=regex.V0), token_pattern: <built-in function any> = None, outset_name: str = '', token_type: str = 'Token', space_token_type: str = None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Create annotations for spans of text defined by some literal or regular expression split pattern
@@ -403,7 +467,7 @@ tokens (default: any sequence of one or more whitespace characters)</dd>
 <dd>if not None, a token annotation is only created if the span between splits (or the begin
 or end of document and a split) matches this pattern: if a literal string, the literal string must
 be present, otherwise must be a compiled regular expression that is found.</dd>
-<dt><strong><code>out_set</code></strong></dt>
+<dt><strong><code>outset_name</code></strong></dt>
 <dd>the destination annotation set</dd>
 <dt><strong><code>token_type</code></strong></dt>
 <dd>the type of annotation to create for the spans between splits</dd>
@@ -424,7 +488,7 @@ do not match the token_pattern are not annotated by this!</dd>
     def __init__(self,
                  split_pattern: any = regex.compile(r&#34;\s+&#34;),
                  token_pattern: any = None,
-                 out_set: str = &#34;&#34;,
+                 outset_name: str = &#34;&#34;,
                  token_type: str = &#34;Token&#34;,
                  space_token_type: str = None):
         &#34;&#34;&#34;
@@ -437,14 +501,14 @@ do not match the token_pattern are not annotated by this!</dd>
             token_pattern: if not None, a token annotation is only created if the span between splits (or the begin
                 or end of document and a split) matches this pattern: if a literal string, the literal string must
                 be present, otherwise must be a compiled regular expression that is found.
-            out_set: the destination annotation set
+            outset_name: the destination annotation set
             token_type: the type of annotation to create for the spans between splits
             space_token_type: if not None, the type of annotation to create for the splits. NOTE: non-splits which
                 do not match the token_pattern are not annotated by this!
         &#34;&#34;&#34;
         self.split_pattern = split_pattern
         self.token_pattern = token_pattern
-        self.outset = out_set
+        self.outset_name = outset_name
         self.token_type = token_type
         self.space_token_type = space_token_type
 
@@ -455,7 +519,7 @@ do not match the token_pattern are not annotated by this!</dd>
             return self.token_pattern.search(text)
 
     def __call__(self, doc, **kwargs):
-        annset = doc.annset(self.outset)
+        annset = doc.annset(self.outset_name)
         last_off = 0
         if isinstance(self.split_pattern, str):
             l = len(self.split_pattern)
@@ -514,7 +578,7 @@ do not match the token_pattern are not annotated by this!</dd>
 <div class="desc"><p>A tokenizer creates token annotations and optionally also space token annotations. In additiona it
 may add word annotations for multi-word tokens and and multi-token words.</p>
 <p>Tokenizers should have the fields token_type, space_token_type, and word_type which identify
-the types of annotations it creates, and out_set to identify the output annotation set.</p></div>
+the types of annotations it creates, and outset_name to identify the output annotation set.</p></div>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -525,7 +589,7 @@ the types of annotations it creates, and out_set to identify the output annotati
     may add word annotations for multi-word tokens and and multi-token words.
 
     Tokenizers should have the fields token_type, space_token_type, and word_type which identify
-    the types of annotations it creates, and out_set to identify the output annotation set.
+    the types of annotations it creates, and outset_name to identify the output annotation set.
 
     &#34;&#34;&#34;
 

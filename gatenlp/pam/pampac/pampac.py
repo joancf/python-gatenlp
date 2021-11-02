@@ -163,7 +163,7 @@ class Pampac:
                             if res.span is not None and res.span.start < next_o:
                                 next_o = res.span.start
                     location = ctx.inc_location(location, to_offset=next_o+1)
-                    # print(f"LOCATION: from {old_t}/{old_a} for {next_o} to {location.text_location}/{location.ann_location}")
+                    # print(f"********** LOCATION: fired={len(fired_rets)}: from {old_t}/{old_a} for {next_o} to {location.text_location}/{location.ann_location}")
                 elif self.skip == "longest":
                     longest = 0
                     for ret in fired_rets:
@@ -206,7 +206,7 @@ class PampacAnnotator(Annotator):
         """
 
         Args:
-            pampac: a Pampac instances
+            pampac: a Pampac instance
             ann_desc: annotation specification for annotations to use as input. This can be a annotation set name,
                 or a list of either annotation set names or tuples, where the first element is an annotation set
                 name and the second element is either a type name or a list of type names. E.g. `[("", "Token")]`

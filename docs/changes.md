@@ -1,6 +1,21 @@
 # Versions and changes
 
-## 1.0.5 (upcoming)
+## 1.0.6 (upcoming)
+
+* add `Document.edit(edits, affected_strategy="keepadapt")` method: update document text and change offsets/indices for all annotations, if necessary.
+* The [StringGazetteer](https://gatenlp.github.io/python-gatenlp/pythondoc/gatenlp/processing/gazetteer/stringgazetteer.html) has been implemented 
+* The [TokenGazetteer](https://gatenlp.github.io/python-gatenlp/pythondoc/gatenlp/processing/gazetteer/tokengazetteer.html) parameter names got changed to match the corresponding `StringGazetteer` names
+* ! the parameter name `out_set` in `gatenlp.processing.tokenizer` was changed to `outset_name` to be consistent with the name used elsewhere.
+* ! the parameter name `out_annset` in `gatenlp.processing.client` was changed to `outset_name` to be consistent with the name used elsewhere.
+* The `Document.clone()` method can be used to easily create an exact copy of a document, where none of the data is shared (deep copy)
+* The [TextNormalizer](https://gatenlp.github.io/python-gatenlp/pythondoc/gatenlp/processing/normalizer.html) has been added. It can be used to normalize the unicode representation of the text in a document.
+* The documentation has been updated and extended (especially for gazetteers and PAMPAC)
+
+## 1.0.5.1 (2021-10-09)
+
+* Bug fix: make `lib_spacy` support both versions 2.x and 3.x (1.0.5 used a method which is only available in 3.x)
+
+## 1.0.5 (2021-10-08)
 
 Changes that break backwards compatibility:
 
@@ -15,6 +30,11 @@ Changes that break backwards compatibility:
   "matchidx" instead of "dataidx". See issue #89
 * Parameter `spacetoken_type` for `AnnSpacy` and `spacy2gatenlp` has been changed to `space_token_type` to conform to 
   the parameter name used for `AnnStanza` and `stanza2gatenlp`.
+* Stanford Stanza support now requires Stanza version 1.3.0 or higher
+* Changes to `lib_spacy`: new parameter `containing_anns` to apply the spacy pipeline only to the part of the document  covered
+  by each of the annotations in the annotation set or iterator. New parameters `component_cfg` to specify a component config
+  for Spacy and `retrieve_spans` to retrieve additional span types to retrieve.
+* Several bugfixes in Pampac.
 
 Other changes and improvements:
 
