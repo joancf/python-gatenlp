@@ -2,9 +2,11 @@
 Support for using spacy: convert from spacy to gatenlp documents and annotations.
 """
 
+import traceback
 from gatenlp import Document, AnnotationSet
 from gatenlp.processing.annotator import Annotator
 import spacy
+import numpy as np
 
 if int(spacy.__version__.split(".")[0]) < 3:
     SPACY_IS_PARSED = lambda doc: doc.is_parsed
@@ -12,7 +14,7 @@ if int(spacy.__version__.split(".")[0]) < 3:
     SPACY_IS_SENTENCED = lambda doc: doc.is_sentenced
     SPACY_IS_NERED = lambda doc: doc.is_nered
 else:
-    SPACY_IS_PARSED = lambda doc:  doc.has_annotation("DEP")
+    SPACY_IS_PARSED = lambda doc: doc.has_annotation("DEP")
     SPACY_IS_TAGGED = lambda doc: doc.has_annotation("TAG")
     SPACY_IS_SENTENCED = lambda doc: doc.has_annotation("SENT_START")
     SPACY_IS_NERED = lambda doc: doc.has_annotation("ENT_IOB")
@@ -155,6 +157,34 @@ def apply_spacy(
         )
 
 
+def get_tok_transformers(doc):
+    """
+    This function gets spacy transformer data and produces an array with the transformer corresponding to each token
+    it should be expanded to consider that some tokens are duplicated!!
+    :param doc:Spacy document already processed with transformer models
+    :return: list of tokens having each a dictionary with the token number, the token, the list of parts and the sum of the transformers of each token
+    """
+    toks = [tok for tok in doc]
+    tokens = doc._.trf_data.tokens
+    trf = doc._.trf_data.tensors
+    align = doc._.trf_data.align
+    # we can flatten the inputs and tensors(in ndarray not tensors), to apply alignment more easily
+    x, y, z = trf[0].shape
+    transf = trf[0].shape = (1, -1, z)
+    inputs = [x for ins in tokens["input_texts"] for x in ins]
+    res = {}
+    for (
+        i_tok,
+        tok,
+        parts,
+    ) in zip(range(len(toks)), toks, align):
+        list = [x for y in parts.data for x in y]
+        if len(list) > 0:
+            tf = np.mean(trf[0][:, list, :], axis=1)
+            res[tok.i] = {"token": tok.text, "trf": tf}
+    return res
+
+
 def spacy2gatenlp(
     spacydoc,
     gatenlpdoc=None,
@@ -217,6 +247,15 @@ def spacy2gatenlp(
         retdoc = gatenlpdoc
     toki2annid = {}
     annset = retdoc.annset(setname)
+
+    if include_trf:
+        try:
+            # Extract transformer for tokens i (using all token parts)
+            trans = get_tok_transformers(spacydoc)
+        except Exception:
+            print("exception get tok_transformers")
+            print(traceback.format_exc())
+            trans = {}
     for tok in spacydoc:
         from_off = tok.idx
         to_off = tok.idx + len(tok)
@@ -257,6 +296,18 @@ def spacy2gatenlp(
             fm["ent_type"] = tok.ent_type_
         if SPACY_IS_PARSED(spacydoc) and add_dep:
             fm["dep"] = tok.dep_
+        if include_trf:
+            try:
+                if trans[tok.i]["token"] != tok.text:
+                    print(
+                        f"token does not match {tok.i} , {tok.text} != {trans[tok.i]['token']} "
+                    )
+                fm["trf"] = trans[tok.i]["trf"]
+
+            except Exception:
+                # print(traceback.format_exc())
+                # print(f"exception on token {tok.i} with ${tok.text}$ ")
+                pass  # fm["trf"] = None
         if tok.is_space:
             anntype = space_token_type
         else:
